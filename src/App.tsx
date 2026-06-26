@@ -11,19 +11,12 @@ import {
   type SeriesMarker,
   type Time,
 } from "lightweight-charts";
+import { DATA_FILES } from "./dataFiles";
 
 const BAR_SPACING = 8;
 const MIN_AUTO_DISPLAY_BARS = 30;
 const MAX_AUTO_DISPLAY_BARS = 320;
 const WHEEL_NAVIGATION_THRESHOLD = 40;
-const DATA_FILES = [
-  "/data/2317_%E3%82%B7%E3%82%B9%E3%83%86%E3%83%8A.csv",
-  "/data/3407_%E6%97%AD%E5%8C%96%E6%88%90.csv",
-  "/data/4543_%E3%83%86%E3%83%AB%E3%83%A2.csv",
-  "/data/5201_AGC.csv",
-  "/data/6326_%E3%82%AF%E3%83%9C%E3%82%BF.csv",
-  "/data/6479_%E3%83%9F%E3%83%8D%E3%83%99%E3%82%A2%E3%83%9F%E3%83%84%E3%83%9F.csv",
-];
 const TRADING_BOOKS_STORAGE_KEY = "stock-practice-trading-books-v1";
 const CHART_SETTINGS_STORAGE_KEY = "stock-practice-chart-settings-v1";
 const PAINT_MARKS_STORAGE_KEY = "stock-practice-paint-marks-v1";
@@ -1238,7 +1231,7 @@ export default function App() {
   const visibleLogicalRangeRef = useRef<VisibleLogicalRange | null>(null);
   const paintPracticeChartRangeRef = useRef<VisibleLogicalRange | null>(null);
   const preserveVisibleRangeTransitionRef = useRef(false);
-  const [selectedDataPath, setSelectedDataPath] = useState(DATA_FILES[0]);
+  const [selectedDataPath, setSelectedDataPath] = useState<string>(DATA_FILES[0]);
   const [currentDate, setCurrentDate] = useState("");
   const [currentOhlc, setCurrentOhlc] = useState<Candle | null>(null);
   const [dateInputValue, setDateInputValue] = useState("");
