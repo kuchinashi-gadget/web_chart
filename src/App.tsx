@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Papa from "papaparse";
 import {
   createChart,
@@ -33,6 +33,7 @@ const PAINT_PRACTICE_STORE_NAME = "paint-practices";
 
 
 type Timeframe = "daily" | "weekly" | "monthly";
+type VisibleLogicalRange = { from: number; to: number };
 type DisplayBarsOption = "auto" | "50" | "75" | "100" | "150" | "200";
 type SettingsTab = "ma" | "appearance";
 type ChartTheme = "dark" | "dark-blue" | "black" | "light" | "light-gray" | "ivory";
@@ -1234,6 +1235,9 @@ export default function App() {
   const processedOrderIdsRef = useRef(new Set<string>());
   const dailyCandlesCacheRef = useRef(new Map<string, Candle[]>());
   const anchorDailyDateRef = useRef<string | null>(null);
+  const visibleLogicalRangeRef = useRef<VisibleLogicalRange | null>(null);
+  const paintPracticeChartRangeRef = useRef<VisibleLogicalRange | null>(null);
+  const preserveVisibleRangeTransitionRef = useRef(false);
   const [selectedDataPath, setSelectedDataPath] = useState(DATA_FILES[0]);
   const [currentDate, setCurrentDate] = useState("");
   const [currentOhlc, setCurrentOhlc] = useState<Candle | null>(null);
@@ -1255,10 +1259,11 @@ export default function App() {
   const [orderLots, setOrderLots] = useState(1);
   const [sharesPerLot, setSharesPerLot] = useState(100);
   const [showProfit, setShowProfit] = useState(true);
-  const [isTradePanelOpen, setIsTradePanelOpen] = useState(true);
+  const [isTradePanelOpen, setIsTradePanelOpen] = useState(false);
   const tradePanelBeforePaintRef = useRef(true);
   const [isPaintPracticeOpen, setIsPaintPracticeOpen] = useState(false);
   const [isPaintCanvasActive, setIsPaintCanvasActive] = useState(false);
+  const [isPaintCanvasReady, setIsPaintCanvasReady] = useState(false);
   const [isPaintCapturing, setIsPaintCapturing] = useState(false);
   const [paintPracticeTool, setPaintPracticeTool] =
     useState<PaintPracticeTool>("line");
@@ -1268,6 +1273,7 @@ export default function App() {
   );
   const [paintPracticeWidth, setPaintPracticeWidth] = useState(3);
   const [paintPracticeNote, setPaintPracticeNote] = useState("");
+  const [paintCanvasZoom, setPaintCanvasZoom] = useState(1);
   const [paintBackgroundDataUrl, setPaintBackgroundDataUrl] = useState("");
   const [paintObjects, setPaintObjects] = useState<PaintDrawingObject[]>([]);
   const [paintUndoStack, setPaintUndoStack] = useState<
@@ -1295,6 +1301,7 @@ export default function App() {
   const [paintMarksByStock, setPaintMarksByStock] = useState<
     Record<string, PaintMark[]>
   >(() => loadPaintMarksFromStorage());
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [isAppearanceSettingsOpen, setIsAppearanceSettingsOpen] =
     useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("appearance");
@@ -1314,6 +1321,45 @@ export default function App() {
   const selectedDatePaintMarks = paintTargetDate
     ? currentPaintMarks.filter((mark) => mark.date === paintTargetDate)
     : [];
+  const isPaintDrawingReady = isPaintCanvasActive && isPaintCanvasReady;
+
+  const rememberVisibleLogicalRange = useCallback((range: VisibleLogicalRange | null) => {
+    if (!range) return null;
+
+    const rememberedRange = { from: range.from, to: range.to };
+    visibleLogicalRangeRef.current = rememberedRange;
+    return rememberedRange;
+  }, []);
+
+  const getCurrentVisibleLogicalRange = useCallback(
+    () => rememberVisibleLogicalRange(
+      chartApiRef.current?.timeScale().getVisibleLogicalRange() ?? null
+    ) ?? visibleLogicalRangeRef.current,
+    [rememberVisibleLogicalRange]
+  );
+
+  const restoreVisibleLogicalRange = useCallback((range: VisibleLogicalRange | null) => {
+    if (!range) return;
+    preserveVisibleRangeTransitionRef.current = true;
+    const applyRange = () => {
+      const chart = chartApiRef.current;
+      if (!chart) return;
+
+      chart.timeScale().setVisibleLogicalRange(range);
+      visibleLogicalRangeRef.current = range;
+    };
+
+    applyRange();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(applyRange);
+    });
+    window.setTimeout(applyRange, 120);
+    window.setTimeout(applyRange, 320);
+    window.setTimeout(applyRange, 700);
+    window.setTimeout(() => {
+      preserveVisibleRangeTransitionRef.current = false;
+    }, 1200);
+  }, []);
 
   useEffect(() => {
     saveTradingBooksToStorage(tradingBooks);
@@ -1322,6 +1368,57 @@ export default function App() {
   useEffect(() => {
     savePaintMarksToStorage(paintMarksByStock);
   }, [paintMarksByStock]);
+
+  useEffect(() => {
+    const syncViewportHeight = () => {
+      const viewport = window.visualViewport;
+      const height = viewport?.height ?? window.innerHeight;
+      const offsetTop = viewport?.offsetTop ?? 0;
+      document.documentElement.style.setProperty(
+        "--app-height",
+        `${height}px`
+      );
+      document.documentElement.style.setProperty(
+        "--app-offset-top",
+        `${offsetTop}px`
+      );
+
+      window.requestAnimationFrame(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+    };
+
+    const syncViewportHeightSoon = () => {
+      syncViewportHeight();
+      window.setTimeout(syncViewportHeight, 80);
+      window.setTimeout(syncViewportHeight, 240);
+      window.setTimeout(syncViewportHeight, 600);
+    };
+
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+      syncViewportHeightSoon();
+    };
+
+    syncViewportHeightSoon();
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    window.addEventListener("orientationchange", syncViewportHeightSoon);
+    window.visualViewport?.addEventListener("resize", syncViewportHeightSoon);
+    window.visualViewport?.addEventListener("scroll", syncViewportHeightSoon);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      window.removeEventListener("orientationchange", syncViewportHeightSoon);
+      window.visualViewport?.removeEventListener(
+        "resize",
+        syncViewportHeightSoon
+      );
+      window.visualViewport?.removeEventListener(
+        "scroll",
+        syncViewportHeightSoon
+      );
+    };
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -1596,6 +1693,7 @@ export default function App() {
           anchorDailyDateRef.current ?? "",
           displayBars
         );
+        let isClampingVisibleRange = false;
 
         const updateChart = () => {
           if (isDisposed) return;
@@ -1642,10 +1740,17 @@ export default function App() {
             ma.series.setData(availableMA);
           });
 
-          chart.timeScale().setVisibleLogicalRange({
+          const nextVisibleRange = {
             from: startIndex,
-            to: endIndex - 1 + 5,
-          });
+            to: endIndex - 1,
+          };
+          const preservedVisibleRange =
+            preserveVisibleRangeTransitionRef.current
+              ? paintPracticeChartRangeRef.current
+              : null;
+          const visibleRangeToApply = preservedVisibleRange ?? nextVisibleRange;
+          visibleLogicalRangeRef.current = visibleRangeToApply;
+          chart.timeScale().setVisibleLogicalRange(visibleRangeToApply);
 
           const latest = allCandles[endIndex - 1];
           setCanNavigateForward(endIndex < allCandles.length);
@@ -1667,15 +1772,78 @@ export default function App() {
           });
         };
 
+        const syncVisibleRightEdge = (range: VisibleLogicalRange | null) => {
+          if (!range) return;
+
+          const rightIndex = Math.min(
+            endIndex - 1,
+            Math.max(0, Math.floor(range.to))
+          );
+          const rightEdgeCandle = allCandles[rightIndex];
+          if (!rightEdgeCandle) return;
+
+          const anchorDate =
+            rightEdgeCandle.sourceEndTime ?? rightEdgeCandle.time;
+          anchorDailyDateRef.current = anchorDate;
+          setCurrentDate(formatDateWithWeekday(rightEdgeCandle.time ?? ""));
+          setCurrentOhlc(rightEdgeCandle);
+          setDateInputValue(anchorDate);
+          if (anchorDate) {
+            setCalendarMonth(anchorDate.slice(0, 7));
+          }
+          setCanNavigateForward(rightIndex < allCandles.length - 1);
+          processPendingOrderRef.current?.(anchorDate, dailyCandles);
+        };
+
         const updateVisibleBarsCount = (
-          range: { from: number; to: number } | null
+          range: VisibleLogicalRange | null
         ) => {
           if (!range) return;
 
-          const firstIndex = Math.max(0, Math.ceil(range.from));
+          const dataStartIndex = 0;
+          const dataEndIndex = Math.max(0, endIndex - 1);
+          const rangeWidth = Math.max(1, range.to - range.from);
+          const maxFrom = Math.max(dataStartIndex, dataEndIndex - rangeWidth);
+          let nextFrom = range.from;
+          let nextTo = range.to;
+
+          if (range.from < dataStartIndex) {
+            nextFrom = dataStartIndex;
+            nextTo = dataStartIndex + rangeWidth;
+          }
+
+          if (nextTo > dataEndIndex) {
+            nextTo = dataEndIndex;
+            nextFrom = Math.max(dataStartIndex, dataEndIndex - rangeWidth);
+          }
+
+          if (nextFrom > maxFrom) {
+            nextFrom = maxFrom;
+            nextTo = Math.min(dataEndIndex, maxFrom + rangeWidth);
+          }
+
+          const clampedRange = { from: nextFrom, to: nextTo };
+          const shouldClamp =
+            Math.abs(clampedRange.from - range.from) > 0.01 ||
+            Math.abs(clampedRange.to - range.to) > 0.01;
+
+          if (shouldClamp && !isClampingVisibleRange) {
+            isClampingVisibleRange = true;
+            chart.timeScale().setVisibleLogicalRange(clampedRange);
+            visibleLogicalRangeRef.current = clampedRange;
+            window.requestAnimationFrame(() => {
+              isClampingVisibleRange = false;
+            });
+            return;
+          }
+
+          rememberVisibleLogicalRange(clampedRange);
+          syncVisibleRightEdge(clampedRange);
+
+          const firstIndex = Math.max(0, Math.ceil(clampedRange.from));
           const lastIndex = Math.min(
             endIndex - 1,
-            Math.floor(range.to)
+            Math.floor(clampedRange.to)
           );
           const count = Math.max(0, lastIndex - firstIndex + 1);
           setVisibleBarsCount((current) => (current === count ? current : count));
@@ -1686,12 +1854,18 @@ export default function App() {
 
         const moveBars = (step: number) => {
           const minIndex = Math.min(displayBars, allCandles.length);
+          const anchorEndIndex = findEndIndexByAnchor(
+            allCandles,
+            anchorDailyDateRef.current ?? "",
+            displayBars
+          );
+          const baseIndex = anchorEndIndex || endIndex;
           const nextIndex = Math.min(
             allCandles.length,
-            Math.max(minIndex, endIndex + step)
+            Math.max(minIndex, baseIndex + step)
           );
 
-          if (nextIndex === endIndex) return;
+          if (nextIndex === endIndex && baseIndex === endIndex) return;
 
           endIndex = nextIndex;
           anchorDailyDateRef.current = allCandles[endIndex - 1]?.sourceEndTime;
@@ -1775,7 +1949,10 @@ export default function App() {
       const width = chartContainer.clientWidth;
       const height = chartContainer.clientHeight;
 
-      if (Math.abs(width - lastChartWidthRef.current) > 2) {
+      if (
+        Math.abs(width - lastChartWidthRef.current) > 2 &&
+        !preserveVisibleRangeTransitionRef.current
+      ) {
         lastChartWidthRef.current = width;
 
         setAutoDisplayBars((current) => {
@@ -1864,6 +2041,7 @@ export default function App() {
     maDisplaySettings,
     appearanceSettings,
     currentPaintMarks,
+    rememberVisibleLogicalRange,
   ]);
 
   const currentShortLots = currentBook.shortPositions.length;
@@ -2178,7 +2356,9 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!isPaintCanvasActive || !paintBackgroundDataUrl) return;
+    if (!isPaintCanvasActive || !paintBackgroundDataUrl) {
+      return;
+    }
     const canvas = paintCanvasRef.current;
     if (!canvas) return;
 
@@ -2196,6 +2376,13 @@ export default function App() {
       paintObjects.forEach((object) => drawPaintObject(context, object));
       if (paintDraftObject) {
         drawPaintObject(context, paintDraftObject);
+      }
+      setIsPaintCanvasReady(true);
+    };
+    image.onerror = () => {
+      if (!cancelled) {
+        setIsPaintCanvasReady(false);
+        setPaintStatusMessage("ペイント画像の読み込みに失敗しました");
       }
     };
     image.src = paintBackgroundDataUrl;
@@ -2218,22 +2405,50 @@ export default function App() {
     }
 
     setPaintStatusMessage("チャート画像を取得中...");
+    const rangeBeforeCapture =
+      getCurrentVisibleLogicalRange() ?? paintPracticeChartRangeRef.current;
+
+    preserveVisibleRangeTransitionRef.current = true;
     setIsPaintCanvasActive(false);
+    setIsPaintCanvasReady(false);
     setPaintTextEditor(null);
     setIsPaintCapturing(true);
+    try {
     await new Promise<void>((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
     });
 
-    const screenshot = chart.takeScreenshot(true, false);
+    const chartForScreenshot = chartApiRef.current ?? chart;
+    if (rangeBeforeCapture) {
+      chartForScreenshot.timeScale().setVisibleLogicalRange(rangeBeforeCapture);
+      visibleLogicalRangeRef.current = rangeBeforeCapture;
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+    }
+
+    const screenshot = chartForScreenshot.takeScreenshot(true, false);
     setPaintBackgroundDataUrl(screenshot.toDataURL("image/png"));
     setPaintObjects([]);
     setPaintUndoStack([]);
     setPaintRedoStack([]);
     setPaintDraftObject(null);
+    setPaintCanvasZoom(1);
     setIsPaintCapturing(false);
     setIsPaintCanvasActive(true);
+    window.setTimeout(() => {
+      preserveVisibleRangeTransitionRef.current = false;
+    }, 600);
     setPaintStatusMessage("現在のチャートを取り込みました");
+    } catch (error) {
+      console.error(error);
+      setPaintStatusMessage("チャート画像の取得に失敗しました。もう一度お試しください");
+    } finally {
+      setIsPaintCapturing(false);
+      window.setTimeout(() => {
+        preserveVisibleRangeTransitionRef.current = false;
+      }, 600);
+    }
   };
 
   const getPaintCanvasPoint = (
@@ -2318,10 +2533,16 @@ export default function App() {
     customColorEditingIndexRef.current = null;
   };
 
+  const changePaintCanvasZoom = (amount: number) => {
+    setPaintCanvasZoom((zoom) =>
+      Math.max(0.5, Math.min(2, Number((zoom + amount).toFixed(2))))
+    );
+  };
+
   const handlePaintPointerDown = (
     event: React.PointerEvent<HTMLCanvasElement>
   ) => {
-    if (!paintBackgroundDataUrl) return;
+    if (!paintBackgroundDataUrl || !isPaintCanvasReady) return;
     const point = getPaintCanvasPoint(event);
 
     if (paintPracticeTool === "eraser") {
@@ -2490,6 +2711,8 @@ export default function App() {
   };
 
   const loadSavedPaintPractice = (item: SavedPaintPractice) => {
+    setIsPaintCanvasReady(false);
+    setPaintCanvasZoom(1);
     setPaintBackgroundDataUrl(item.backgroundDataUrl);
     setPaintObjects(item.objects);
     setPaintUndoStack([]);
@@ -2505,19 +2728,119 @@ export default function App() {
     setPaintSavedItems((items) => items.filter((item) => item.id !== id));
   };
 
-  const openPaintPractice = () => {
+  const openPaintPractice = useCallback(() => {
+    const rangeBeforeOpen = getCurrentVisibleLogicalRange();
+    paintPracticeChartRangeRef.current = rangeBeforeOpen;
     tradePanelBeforePaintRef.current = isTradePanelOpen;
     setIsTradePanelOpen(false);
     setIsPaintCanvasActive(false);
+    setIsPaintCanvasReady(false);
     setIsPaintPracticeOpen(true);
-  };
+    restoreVisibleLogicalRange(rangeBeforeOpen);
+  }, [getCurrentVisibleLogicalRange, isTradePanelOpen, restoreVisibleLogicalRange]);
 
-  const closePaintPractice = () => {
+  const closePaintPractice = useCallback(() => {
+    const rangeBeforeClose =
+      getCurrentVisibleLogicalRange() ?? paintPracticeChartRangeRef.current;
     setIsPaintPracticeOpen(false);
     setIsPaintCanvasActive(false);
+    setIsPaintCanvasReady(false);
     setPaintTextEditor(null);
     setIsTradePanelOpen(tradePanelBeforePaintRef.current);
+    restoreVisibleLogicalRange(rangeBeforeClose);
+  }, [getCurrentVisibleLogicalRange, restoreVisibleLogicalRange]);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+
+      await document.documentElement.requestFullscreen();
+    } catch (error) {
+      console.error(error);
+      setOrderMessage("全画面表示を切り替えられませんでした");
+    }
   };
+
+  useEffect(() => {
+    const isShortcutDisabledTarget = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
+
+      return (
+        target.tagName === "INPUT" ||
+        target.tagName === "SELECT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      );
+    };
+
+    const handleShortcutKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (isShortcutDisabledTarget(event.target)) return;
+
+      const key = event.key.toLowerCase();
+
+      if (key === "d" || key === "w" || key === "m") {
+        event.preventDefault();
+        const nextTimeframe: Timeframe =
+          key === "d" ? "daily" : key === "w" ? "weekly" : "monthly";
+        if (timeframe !== nextTimeframe) {
+          setIsChartLoading(true);
+          setTimeframe(nextTimeframe);
+        }
+        return;
+      }
+
+      if (key === "f") {
+        event.preventDefault();
+        void toggleFullscreen();
+        return;
+      }
+
+      if (key === "p") {
+        event.preventDefault();
+        if (isPaintPracticeOpen) {
+          closePaintPractice();
+        } else {
+          openPaintPractice();
+        }
+        return;
+      }
+
+      if (event.key === "Escape") {
+        if (
+          isPaintHistoryOpen ||
+          isAppearanceSettingsOpen ||
+          isDatePickerOpen ||
+          isPaintPracticeOpen
+        ) {
+          event.preventDefault();
+          setIsPaintHistoryOpen(false);
+          setIsAppearanceSettingsOpen(false);
+          setIsDatePickerOpen(false);
+          if (isPaintPracticeOpen) {
+            closePaintPractice();
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleShortcutKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleShortcutKeyDown);
+    };
+  }, [
+    timeframe,
+    isPaintPracticeOpen,
+    isPaintHistoryOpen,
+    isAppearanceSettingsOpen,
+    isDatePickerOpen,
+    openPaintPractice,
+    closePaintPractice,
+  ]);
 
   return (
     <div
@@ -2536,6 +2859,13 @@ export default function App() {
         overflow: "hidden",
       }}
     >
+      <div className="mobile-portrait-notice" aria-hidden="true">
+        <strong>横画面がおすすめです</strong>
+        <span>
+          端末を横向きにすると、チャートやペイント練習を広く使えます。
+        </span>
+      </div>
+
       <header
         className="chart-toolbar"
         style={{
@@ -2689,6 +3019,30 @@ export default function App() {
 
         <button
           type="button"
+          onClick={() => void toggleFullscreen()}
+          title="Fキーでも切り替えできます"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            backgroundColor: isFullscreen ? "#1d4ed8" : "#1f2937",
+            border: isFullscreen
+              ? "1px solid #60a5fa"
+              : "1px solid #475569",
+            color: "#f8fafc",
+            padding: "5px 12px",
+            borderRadius: "6px",
+            cursor: "pointer",
+            fontSize: "14px",
+            fontWeight: 700,
+            whiteSpace: "nowrap",
+          }}
+        >
+          ⛶ {isFullscreen ? "全画面解除" : "全画面"}
+        </button>
+
+        <button
+          type="button"
           onClick={() => {
             setSettingsTab("appearance");
             setIsAppearanceSettingsOpen(true);
@@ -2707,6 +3061,7 @@ export default function App() {
             cursor: "pointer",
             fontSize: "14px",
             fontWeight: 700,
+            whiteSpace: "nowrap",
           }}
         >
           ⚙ 外観設定
@@ -3017,17 +3372,31 @@ export default function App() {
                 </span>
               </div>
               <div className="paint-canvas-zoom">
-                <button type="button" disabled aria-label="縮小">
+                <button
+                  type="button"
+                  onClick={() => changePaintCanvasZoom(-0.25)}
+                  disabled={paintCanvasZoom <= 0.5}
+                  aria-label="縮小"
+                >
                   −
                 </button>
-                <span>100%</span>
-                <button type="button" disabled aria-label="拡大">
+                <span>{Math.round(paintCanvasZoom * 100)}%</span>
+                <button
+                  type="button"
+                  onClick={() => changePaintCanvasZoom(0.25)}
+                  disabled={paintCanvasZoom >= 2}
+                  aria-label="拡大"
+                >
                   ＋
                 </button>
               </div>
             </div>
 
-            <div className="paint-canvas-placeholder">
+            <div
+              className={`paint-canvas-placeholder ${
+                paintCanvasZoom > 1 ? "is-zoomed" : ""
+              }`}
+            >
               <canvas
                 ref={paintCanvasRef}
                 className="paint-drawing-canvas"
@@ -3042,6 +3411,9 @@ export default function App() {
                       : paintPracticeTool === "eraser"
                         ? "cell"
                         : "crosshair",
+                  width: `${paintCanvasZoom * 100}%`,
+                  maxWidth: paintCanvasZoom > 1 ? "none" : "100%",
+                  maxHeight: paintCanvasZoom > 1 ? "none" : "100%",
                 }}
               />
               {paintTextEditor && (
@@ -3169,6 +3541,7 @@ export default function App() {
             type="button"
             className="capture-chart-button"
             onClick={captureChartForPaint}
+            disabled={isPaintCapturing}
           >
             <span>▣</span>
             {isPaintCanvasActive
@@ -3193,7 +3566,7 @@ export default function App() {
                     setPaintTextEditor(null);
                     setPaintPracticeTool(tool.value);
                   }}
-                  disabled={!isPaintCanvasActive}
+                  disabled={!isPaintDrawingReady}
                 >
                   {tool.value === "eraser" ? (
                     <span className="paint-eraser-icon" aria-hidden="true">
@@ -3220,7 +3593,7 @@ export default function App() {
                   }
                   style={{ backgroundColor: color }}
                   onClick={() => setPaintPracticeColor(color)}
-                  disabled={!isPaintCanvasActive}
+                  disabled={!isPaintDrawingReady}
                   aria-label={`描画色 ${color}`}
                 />
               ))}
@@ -3233,7 +3606,7 @@ export default function App() {
                     }
                     style={{ backgroundColor: color }}
                     onClick={() => setPaintPracticeColor(color)}
-                    disabled={!isPaintCanvasActive}
+                    disabled={!isPaintDrawingReady}
                     aria-label={`カスタム描画色 ${color}`}
                   />
                   <button
@@ -3261,7 +3634,7 @@ export default function App() {
                   onBlur={() => {
                     customColorEditingIndexRef.current = null;
                   }}
-                  disabled={!isPaintCanvasActive}
+                  disabled={!isPaintDrawingReady}
                   aria-label="カスタム描画色"
                 />
               </label>
@@ -3279,7 +3652,7 @@ export default function App() {
                     paintPracticeWidth === width ? "is-selected" : ""
                   }
                   onClick={() => setPaintPracticeWidth(width)}
-                  disabled={!isPaintCanvasActive}
+                  disabled={!isPaintDrawingReady}
                   aria-label={`線の太さ ${width}`}
                 >
                   <span style={{ height: `${Math.max(1, width / 2)}px` }} />
@@ -3323,14 +3696,14 @@ export default function App() {
           <button
             type="button"
             onClick={downloadPaintPng}
-            disabled={!isPaintCanvasActive}
+            disabled={!isPaintDrawingReady}
           >
             PNGダウンロード
           </button>
           <button
             type="button"
             onClick={saveCurrentPaintPractice}
-            disabled={!isPaintCanvasActive}
+            disabled={!isPaintDrawingReady}
           >
             ペイントを保存
           </button>
@@ -4702,7 +5075,7 @@ export default function App() {
           aria-label="売買パネルを開く"
         >
           <span className="panel-open-arrow">‹</span>
-          <span className="panel-open-label">売買</span>
+          <span className="panel-open-label">売買練習</span>
         </button>
       )}
     </div>

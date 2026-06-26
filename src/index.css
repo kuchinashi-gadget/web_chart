@@ -26,8 +26,13 @@ body,
 #root {
   width: 100%;
   height: 100%;
+  height: var(--app-height, 100dvh);
   margin: 0;
   overflow: hidden;
+}
+
+body {
+  transform: translateY(calc(-1 * var(--app-offset-top, 0px)));
 }
 
 button,
@@ -42,6 +47,7 @@ button {
 
 .trading-app {
   position: relative;
+  height: 100%;
   padding: 6px 338px 6px 8px !important;
   background: #0d1420 !important;
   transition:
@@ -58,11 +64,15 @@ button {
 }
 
 .trading-app.paint-practice-open.paint-canvas-active {
-  padding-left: 306px !important;
+  padding-left: 8px !important;
 }
 
 .trading-app.paint-canvas-active .chart-toolbar,
 .trading-app.paint-capture-preparing .chart-toolbar {
+  display: none;
+}
+
+.mobile-portrait-notice {
   display: none;
 }
 
@@ -75,6 +85,10 @@ button {
   min-width: 0;
   padding: 2px 2px 5px;
   border-bottom: 1px solid #202b38;
+}
+
+.paint-practice-open .chart-toolbar {
+  margin-left: 48px;
 }
 
 .visually-hidden {
@@ -289,6 +303,11 @@ button {
   position: relative;
   margin-top: 0;
   min-width: 0;
+  transition: margin-left 180ms ease;
+}
+
+.paint-practice-open .chart-stage {
+  margin-left: 298px;
 }
 
 .paint-canvas-workspace {
@@ -361,6 +380,12 @@ button {
   background: #101a28;
   border: 1px solid #3a4b60;
   border-radius: 4px;
+}
+
+.paint-canvas-placeholder.is-zoomed {
+  align-items: flex-start;
+  justify-content: flex-start;
+  overflow: auto;
 }
 
 .paint-drawing-canvas {
@@ -1094,14 +1119,16 @@ button {
   right: 6px;
   bottom: 6px;
   width: 322px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  display: block;
+  overflow-y: auto;
+  overflow-x: hidden;
   color: var(--text);
   text-align: left;
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   transition:
     transform 180ms ease,
     opacity 140ms ease;
@@ -1317,8 +1344,7 @@ button {
 }
 
 .order-section {
-  flex: 1 1 auto;
-  min-height: 0;
+  min-height: auto;
 }
 
 .order-action-grid {
@@ -1695,12 +1721,20 @@ button {
     width: 278px;
   }
 
+  .trading-app.paint-practice-open {
+    padding-left: 8px !important;
+  }
+
   .trading-app.paint-practice-open.paint-canvas-active {
-    padding-left: 278px !important;
+    padding-left: 8px !important;
   }
 
   .paint-practice-panel {
     width: 262px;
+  }
+
+  .paint-practice-open .chart-stage {
+    margin-left: 270px;
   }
 
   .trade-section {
@@ -1714,6 +1748,10 @@ button {
 
   .chart-toolbar {
     grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .paint-practice-open .chart-toolbar {
+    margin-left: 0;
   }
 
   .timeframe-row {
@@ -1774,5 +1812,376 @@ button {
 
   .paint-panel-footer {
     padding: 8px 10px;
+  }
+}
+
+@media (max-width: 1100px) and (orientation: landscape),
+  (max-height: 560px) and (orientation: landscape) {
+  .trading-app {
+    padding: 3px !important;
+  }
+
+  .trading-app:not(.trade-panel-collapsed) {
+    padding-right: 326px !important;
+  }
+
+  .trading-app.paint-practice-open {
+    padding-left: 3px !important;
+  }
+
+  .trading-app.paint-practice-open.paint-canvas-active {
+    padding-left: 3px !important;
+  }
+
+  .paint-practice-open .chart-stage {
+    margin-left: 260px;
+  }
+
+  .chart-toolbar {
+    gap: 3px 5px;
+    padding: 1px 1px 3px;
+  }
+
+  .paint-practice-open .chart-toolbar {
+    margin-left: 0;
+  }
+
+  .stock-select {
+    width: 138px;
+    min-width: 138px;
+    min-height: 28px !important;
+    padding: 3px 28px 3px 8px !important;
+    font-size: 12px !important;
+  }
+
+  .toolbar-group {
+    min-height: 28px;
+    gap: 4px !important;
+    padding: 2px 4px;
+  }
+
+  .toolbar-group-label,
+  .visible-bars-count {
+    display: none;
+  }
+
+  .segmented-control {
+    grid-template-columns: repeat(3, minmax(38px, auto));
+  }
+
+  .segmented-control button,
+  .display-bars-select {
+    min-height: 24px !important;
+    padding-top: 2px !important;
+    padding-bottom: 2px !important;
+    font-size: 11px !important;
+  }
+
+  .navigation-row {
+    gap: 4px !important;
+    overflow: hidden;
+  }
+
+  .bar-navigation-button,
+  .current-date-button,
+  .selected-date-button {
+    min-height: 26px !important;
+    padding: 3px 7px !important;
+    font-size: 11px !important;
+  }
+
+  .current-date-button {
+    min-width: 168px !important;
+  }
+
+  .selected-date-button {
+    max-width: 230px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ohlc-strip {
+    display: none !important;
+  }
+
+  .panel-open-button,
+  .paint-panel-open-button {
+    width: 34px;
+    min-height: 64px;
+    padding: 4px 3px;
+  }
+
+  .panel-open-label,
+  .paint-panel-open-label {
+    font-size: 10px;
+  }
+
+  .trade-panel {
+    top: 3px;
+    right: 3px;
+    bottom: 3px;
+    z-index: 22;
+    display: block;
+    width: min(320px, calc(100vw - 48px));
+    overflow-y: auto;
+    overflow-x: hidden;
+    box-shadow: 0 18px 46px rgba(0, 0, 0, 0.48);
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  .trade-panel-collapsed .trade-panel {
+    transform: translateX(calc(100% + 8px));
+  }
+
+  .trade-section {
+    padding: 9px 11px;
+  }
+
+  .trade-section h2 {
+    font-size: 13px;
+  }
+
+  .position-display {
+    margin-top: 8px;
+  }
+
+  .position-side strong {
+    font-size: 30px;
+  }
+
+  .position-caption {
+    margin-top: 7px;
+    padding-top: 7px;
+    font-size: 11px;
+  }
+
+  .profit-list > div {
+    min-height: 22px;
+    font-size: 12px;
+  }
+
+  .order-action-grid {
+    gap: 6px;
+  }
+
+  .order-action {
+    min-height: 42px;
+    padding: 7px;
+  }
+
+  .order-section {
+    flex: none;
+    min-height: auto;
+  }
+
+  .lot-control-row {
+    margin-top: 8px;
+  }
+
+  .execution-row,
+  .order-preview {
+    margin-top: 7px;
+    font-size: 11px;
+  }
+
+  .submit-order-button {
+    min-height: 32px;
+    margin-top: 7px;
+    font-size: 12px;
+  }
+
+  .chart-memo-section {
+    display: none;
+  }
+
+  .trade-panel-footer {
+    gap: 5px;
+    padding: 7px 10px;
+  }
+
+  .trade-panel-footer button {
+    min-height: 28px;
+    font-size: 10px;
+  }
+
+  .paint-practice-panel {
+    width: 252px;
+  }
+
+  .paint-canvas-workspace {
+    gap: 5px;
+    padding: 6px;
+  }
+
+  .paint-note-area textarea {
+    min-height: 42px;
+  }
+}
+
+@media (max-height: 560px) and (orientation: landscape) {
+  .trading-app:not(.trade-panel-collapsed) {
+    padding-right: 212px !important;
+  }
+
+  .trade-panel {
+    width: min(206px, calc(100vw - 44px));
+  }
+
+  .trade-section {
+    padding: 6px 7px;
+  }
+
+  .panel-header-actions {
+    gap: 4px;
+  }
+
+  .mock-badge {
+    padding: 1px 5px;
+    font-size: 9px;
+  }
+
+  .trade-section h2 {
+    font-size: 12px;
+  }
+
+  .position-display {
+    margin-top: 6px;
+  }
+
+  .position-side {
+    gap: 7px;
+  }
+
+  .position-side span {
+    font-size: 11px;
+  }
+
+  .position-side strong {
+    font-size: 24px;
+  }
+
+  .position-caption {
+    margin-top: 6px;
+    padding-top: 6px;
+    font-size: 10px;
+  }
+
+  .profit-list {
+    margin-top: 6px;
+  }
+
+  .profit-list > div {
+    min-height: 19px;
+    font-size: 11px;
+  }
+
+  .profit-total {
+    padding-top: 5px;
+  }
+
+  .profit-total dt,
+  .profit-total dd {
+    font-size: 13px;
+  }
+
+  .order-action-grid {
+    margin-top: 7px;
+    gap: 4px;
+  }
+
+  .order-action {
+    min-height: 32px;
+    padding: 4px;
+  }
+
+  .order-action strong {
+    font-size: 11px;
+  }
+
+  .order-action span {
+    font-size: 9px;
+  }
+
+  .lot-control-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .lot-stepper {
+    align-self: stretch;
+    grid-template-columns: 28px 1fr 28px;
+    height: 28px;
+  }
+
+  .lot-setting input {
+    width: 42px;
+  }
+
+  .execution-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+}
+
+@media (max-width: 768px) and (orientation: portrait) {
+  .mobile-portrait-notice {
+    position: absolute;
+    z-index: 40;
+    inset: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 18px;
+    color: #dce7f5;
+    text-align: center;
+    background: rgba(10, 16, 24, 0.88);
+    border: 1px solid #33465d;
+    border-radius: 8px;
+    backdrop-filter: blur(3px);
+    pointer-events: none;
+  }
+
+  .mobile-portrait-notice strong {
+    color: #f8fafc;
+    font-size: 18px;
+  }
+
+  .mobile-portrait-notice span {
+    max-width: 280px;
+    color: #aebbd0;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .trading-app {
+    padding: 4px !important;
+  }
+
+  .chart-toolbar {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .stock-selector-row,
+  .timeframe-row,
+  .navigation-row {
+    flex-wrap: wrap !important;
+  }
+
+  .ohlc-strip,
+  .selected-date-button,
+  .visible-bars-count {
+    display: none !important;
+  }
+
+  .panel-open-button,
+  .paint-panel-open-button {
+    width: 34px;
+    min-height: 62px;
   }
 }
