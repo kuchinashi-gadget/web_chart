@@ -11,7 +11,7 @@ import {
   type SeriesMarker,
   type Time,
 } from "lightweight-charts";
-import { DATA_FILES } from "./dataFiles";
+import { DATA_FILES, getInstrumentDefinition } from "./dataFiles";
 
 const BAR_SPACING = 8;
 const MIN_AUTO_DISPLAY_BARS = 30;
@@ -495,11 +495,24 @@ function getPaintTextFontSize(width: number) {
   return 64;
 }
 
-function formatYen(value: number, showSign = true) {
-  const rounded = Math.round(value);
+function formatCurrencyAmount(value: number, currency: string, showSign = true) {
+  const fractionDigits = currency === "JPY" ? 0 : 2;
+  const rounded =
+    currency === "JPY"
+      ? Math.round(value)
+      : Math.round(value * 100) / 100;
   const sign = showSign && rounded > 0 ? "+" : "";
+  const formatted = rounded.toLocaleString("ja-JP", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  });
+  const suffix = currency === "JPY" ? "円" : ` ${currency}`;
 
-  return `${sign}${rounded.toLocaleString("ja-JP")}円`;
+  return `${sign}${formatted}${suffix}`;
+}
+
+function formatQuantity(value: number, unitLabel: string) {
+  return `${value.toLocaleString("ja-JP")}${unitLabel}`;
 }
 
 function drawPaintObject(
@@ -1232,6 +1245,7 @@ export default function App() {
   const paintPracticeChartRangeRef = useRef<VisibleLogicalRange | null>(null);
   const preserveVisibleRangeTransitionRef = useRef(false);
   const [selectedDataPath, setSelectedDataPath] = useState<string>(DATA_FILES[0]);
+  const selectedInstrument = getInstrumentDefinition(selectedDataPath);
   const [currentDate, setCurrentDate] = useState("");
   const [currentOhlc, setCurrentOhlc] = useState<Candle | null>(null);
   const [dateInputValue, setDateInputValue] = useState("");
@@ -1250,7 +1264,9 @@ export default function App() {
   const [visibleBarsCount, setVisibleBarsCount] = useState(0);
   const [orderAction, setOrderAction] = useState<OrderAction>("add-short");
   const [orderLots, setOrderLots] = useState(1);
-  const [sharesPerLot, setSharesPerLot] = useState(100);
+  const [sharesPerLot, setSharesPerLot] = useState(
+    () => getInstrumentDefinition(DATA_FILES[0]).defaultLotSize
+  );
   const [showProfit, setShowProfit] = useState(true);
   const [isTradePanelOpen, setIsTradePanelOpen] = useState(false);
   const tradePanelBeforePaintRef = useRef(true);
@@ -1450,7 +1466,8 @@ export default function App() {
               (total, position) =>
                 total +
                 (position.entryPrice - executionCandle.open) *
-                  position.sharesPerLot,
+                  position.sharesPerLot *
+                  selectedInstrument.multiplier,
               0
             )
           : pendingOrder.action === "close-long"
@@ -1458,7 +1475,8 @@ export default function App() {
                 (total, position) =>
                   total +
                   (executionCandle.open - position.entryPrice) *
-                    position.sharesPerLot,
+                    position.sharesPerLot *
+                    selectedInstrument.multiplier,
                 0
               )
             : null;
@@ -1520,12 +1538,17 @@ export default function App() {
       });
 
       setOrderMessage(
-        `${formatDateWithWeekday(pendingOrder.executeDate)}の始値 ${
-          executionCandle.open
-        }円で約定しました${
+        `${formatDateWithWeekday(pendingOrder.executeDate)}の始値 ${formatCurrencyAmount(
+          executionCandle.open,
+          selectedInstrument.currency,
+          false
+        )}で約定しました${
           executionRealizedProfit === null
             ? ""
-            : `（確定損益 ${formatYen(executionRealizedProfit)}）`
+            : `（確定損益 ${formatCurrencyAmount(
+                executionRealizedProfit,
+                selectedInstrument.currency
+              )}）`
         }`
       );
     };
@@ -1538,6 +1561,8 @@ export default function App() {
     currentBook.pendingOrder,
     currentBook.shortPositions,
     selectedDataPath,
+    selectedInstrument.currency,
+    selectedInstrument.multiplier,
   ]);
 
   useEffect(() => {
@@ -2050,16 +2075,28 @@ export default function App() {
       : currentBook.shortPositions.reduce(
           (total, position) =>
             total +
-            (position.entryPrice - currentClose) * position.sharesPerLot,
+            (position.entryPrice - currentClose) *
+              position.sharesPerLot *
+              selectedInstrument.multiplier,
           0
         ) +
         currentBook.longPositions.reduce(
           (total, position) =>
             total +
-            (currentClose - position.entryPrice) * position.sharesPerLot,
+            (currentClose - position.entryPrice) *
+              position.sharesPerLot *
+              selectedInstrument.multiplier,
           0
         );
   const totalProfit = realizedProfit + unrealizedProfit;
+  const instrumentUnitSummary = `1玉 = ${formatQuantity(
+    sharesPerLot,
+    selectedInstrument.unitLabel
+  )} / ${selectedInstrument.currency}`;
+  const instrumentMultiplierSummary =
+    selectedInstrument.multiplier === 1
+      ? ""
+      : ` / multiplier ${selectedInstrument.multiplier}`;
   const projectedShortLots =
     orderAction === "add-short"
       ? currentShortLots + orderLots
@@ -2204,7 +2241,7 @@ export default function App() {
         "銘柄名",
         "注文種別",
         "玉数",
-        "株数",
+        "数量",
         "注文日",
         "約定日",
         "約定価格",
@@ -2893,6 +2930,7 @@ export default function App() {
             aria-label="銘柄"
             value={selectedDataPath}
             onChange={(event) => {
+              const nextDataPath = event.target.value;
               anchorDailyDateRef.current = null;
               setCurrentDate("");
               setCurrentOhlc(null);
@@ -2904,7 +2942,10 @@ export default function App() {
               setOrderMessage("");
               setIsDatePickerOpen(false);
               setIsChartLoading(true);
-              setSelectedDataPath(event.target.value);
+              setSharesPerLot(
+                getInstrumentDefinition(nextDataPath).defaultLotSize
+              );
+              setSelectedDataPath(nextDataPath);
               event.currentTarget.blur();
             }}
             style={{
@@ -3851,19 +3892,34 @@ export default function App() {
             <div>
               <dt>確定損益</dt>
               <dd className={profitClassName(realizedProfit)}>
-                {showProfit ? formatYen(realizedProfit) : "••••••"}
+                {showProfit
+                  ? formatCurrencyAmount(
+                      realizedProfit,
+                      selectedInstrument.currency
+                    )
+                  : "••••••"}
               </dd>
             </div>
             <div>
               <dt>含み損益</dt>
               <dd className={profitClassName(unrealizedProfit)}>
-                {showProfit ? formatYen(unrealizedProfit) : "••••••"}
+                {showProfit
+                  ? formatCurrencyAmount(
+                      unrealizedProfit,
+                      selectedInstrument.currency
+                    )
+                  : "••••••"}
               </dd>
             </div>
             <div className="profit-total">
               <dt>総合損益</dt>
               <dd className={profitClassName(totalProfit)}>
-                {showProfit ? formatYen(totalProfit) : "••••••"}
+                {showProfit
+                  ? formatCurrencyAmount(
+                      totalProfit,
+                      selectedInstrument.currency
+                    )
+                  : "••••••"}
               </dd>
             </div>
           </dl>
@@ -3902,25 +3958,7 @@ export default function App() {
           <div className="lot-control-row">
             <div>
               <span className="field-label">注文玉数</span>
-              <label className="lot-setting">
-                1玉 =
-                <input
-                  type="number"
-                  min="1"
-                  max="100000"
-                  step="1"
-                  value={sharesPerLot}
-                  disabled={Boolean(pendingOrder)}
-                  aria-label="1玉あたりの株数"
-                  onChange={(event) => {
-                    const nextValue = Number(event.target.value);
-                    if (Number.isFinite(nextValue) && nextValue >= 1) {
-                      setSharesPerLot(Math.min(100000, Math.floor(nextValue)));
-                    }
-                  }}
-                />
-                株
-              </label>
+              <span className="lot-summary">{instrumentUnitSummary}</span>
             </div>
             <div className="lot-stepper">
               <button
@@ -3943,6 +3981,38 @@ export default function App() {
             </div>
           </div>
 
+          <details className="order-detail-settings">
+            <summary>数量設定</summary>
+            <label className="lot-setting">
+              <span>1玉あたり数量</span>
+              <span className="lot-setting-control">
+                <input
+                  type="number"
+                  min="1"
+                  max="100000"
+                  step="1"
+                  value={sharesPerLot}
+                  disabled={Boolean(pendingOrder)}
+                  aria-label="1玉あたり数量"
+                  onChange={(event) => {
+                    const nextValue = Number(event.target.value);
+                    if (Number.isFinite(nextValue) && nextValue >= 1) {
+                      setSharesPerLot(Math.min(100000, Math.floor(nextValue)));
+                    }
+                  }}
+                />
+                {selectedInstrument.unitLabel}
+              </span>
+            </label>
+            <div className="instrument-unit-summary">
+              <span>計算単位</span>
+              <strong>
+                {instrumentUnitSummary}
+                {instrumentMultiplierSummary}
+              </strong>
+            </div>
+          </details>
+
           <div className="execution-row">
             <span>約定タイミング</span>
             <strong>次の取引日の始値</strong>
@@ -3954,7 +4024,12 @@ export default function App() {
                 <span>注文待機中</span>
                 <strong>
                   {orderActionLabel[pendingOrder.action]}・
-                  {pendingOrder.lots}玉（{pendingOrder.shares.toLocaleString()}株）
+                  {pendingOrder.lots}玉（
+                  {formatQuantity(
+                    pendingOrder.shares,
+                    selectedInstrument.unitLabel
+                  )}
+                  ）
                 </strong>
               </div>
               <div>
@@ -5022,7 +5097,11 @@ export default function App() {
                     <div>
                       <strong>{orderActionLabel[log.action]}</strong>
                       <span>
-                        {log.lots}玉・{log.shares.toLocaleString()}株
+                        {log.lots}玉・
+                        {formatQuantity(
+                          log.shares,
+                          selectedInstrument.unitLabel
+                        )}
                       </span>
                     </div>
                     <div>
@@ -5035,7 +5114,13 @@ export default function App() {
                     </div>
                     <div>
                       <span>約定価格</span>
-                      <strong>{log.executionPrice}円</strong>
+                      <strong>
+                        {formatCurrencyAmount(
+                          log.executionPrice,
+                          selectedInstrument.currency,
+                          false
+                        )}
+                      </strong>
                     </div>
                     <div>
                       <span>確定損益</span>
@@ -5048,7 +5133,10 @@ export default function App() {
                       >
                         {log.realizedProfit === null
                           ? "-"
-                          : formatYen(log.realizedProfit)}
+                          : formatCurrencyAmount(
+                              log.realizedProfit,
+                              selectedInstrument.currency
+                            )}
                       </strong>
                     </div>
                   </div>

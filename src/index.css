@@ -1421,16 +1421,70 @@ button {
   font-weight: 650;
 }
 
-.lot-setting {
-  margin-top: 2px;
+.lot-summary {
+  display: block;
+  margin-top: 3px;
   color: #7f8da0;
   font-size: 10px;
+}
+
+.order-detail-settings {
+  margin-top: 8px;
+  color: #8fa0b5;
+  font-size: 11px;
+}
+
+.order-detail-settings summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #93a4b8;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.order-detail-settings summary::-webkit-details-marker {
+  display: none;
+}
+
+.order-detail-settings summary::after {
+  content: ">";
+  color: #64748b;
+  font-size: 10px;
+  transition: transform 0.15s ease;
+}
+
+.order-detail-settings[open] summary::after {
+  transform: rotate(90deg);
+}
+
+.lot-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 7px 9px;
+  color: #8fa0b5;
+  background: rgba(30, 41, 59, 0.34);
+  border: 1px solid rgba(71, 85, 105, 0.44);
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.lot-setting-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  color: #dce4ee;
 }
 
 .lot-setting input {
   width: 58px;
   height: 22px;
-  margin: 0 4px;
+  margin: 0;
   padding: 1px 4px;
   color: #e8edf4;
   background: #17212d;
@@ -1442,6 +1496,26 @@ button {
 
 .lot-setting input:disabled {
   opacity: 0.55;
+}
+
+.instrument-unit-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 7px 9px;
+  color: #8fa0b5;
+  background: rgba(30, 41, 59, 0.44);
+  border: 1px solid rgba(71, 85, 105, 0.54);
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.instrument-unit-summary strong {
+  color: #e2e8f0;
+  font-weight: 700;
+  text-align: right;
 }
 
 .lot-stepper {
