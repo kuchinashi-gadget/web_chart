@@ -1385,6 +1385,19 @@ button {
   font-size: 10px;
 }
 
+.quick-order-action {
+  min-height: 54px;
+  text-align: center;
+}
+
+.quick-order-action strong {
+  font-size: 15px;
+}
+
+.quick-order-action span {
+  font-size: 11px;
+}
+
 .order-action:hover {
   border-color: var(--border-strong);
 }

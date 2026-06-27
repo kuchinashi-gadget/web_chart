@@ -2350,61 +2350,28 @@ export default function App() {
   const pendingCloseLongLots = pendingOrders
     .filter((order) => order.action === "close-long")
     .reduce((total, order) => total + order.lots, 0);
-  const pendingAddShortLots = pendingOrders
-    .filter((order) => order.action === "add-short")
-    .reduce((total, order) => total + order.lots, 0);
-  const pendingAddLongLots = pendingOrders
-    .filter((order) => order.action === "add-long")
-    .reduce((total, order) => total + order.lots, 0);
-  const projectedBaseShortLots = Math.max(
-    0,
-    currentShortLots + pendingAddShortLots - pendingCloseShortLots
-  );
-  const projectedBaseLongLots = Math.max(
-    0,
-    currentLongLots + pendingAddLongLots - pendingCloseLongLots
-  );
-  const projectedShortLots =
-    orderAction === "add-short"
-      ? projectedBaseShortLots + orderLots
-      : orderAction === "close-short"
-        ? Math.max(0, projectedBaseShortLots - orderLots)
-        : projectedBaseShortLots;
-  const projectedLongLots =
-    orderAction === "add-long"
-      ? projectedBaseLongLots + orderLots
-      : orderAction === "close-long"
-        ? Math.max(0, projectedBaseLongLots - orderLots)
-        : projectedBaseLongLots;
   const orderActionLabel: Record<OrderAction, string> = {
     "add-short": "売りを追加",
     "close-short": "売りを返済",
     "add-long": "買いを追加",
     "close-long": "買いを返済",
   };
-  const orderActionSubLabel: Record<OrderAction, string> = {
-    "add-short": "新規売り",
-    "close-short": "返済買い",
-    "add-long": "新規買い",
-    "close-long": "返済売り",
+  const quickOrderLabel: Record<OrderAction, string> = {
+    "add-short": "売り +",
+    "close-short": "売り -",
+    "add-long": "買い +",
+    "close-long": "買い -",
   };
-  const orderSubmitLabel: Record<OrderAction, string> = {
-    "add-short": `売りを${orderLots}玉追加する`,
-    "close-short": `売りを${orderLots}玉返済する`,
-    "add-long": `買いを${orderLots}玉追加する`,
-    "close-long": `買いを${orderLots}玉返済する`,
-  };
-  const closeOrderAvailable =
-    orderAction === "close-short"
+  const getCloseOrderAvailable = (action: OrderAction) =>
+    action === "close-short"
       ? Math.max(0, currentShortLots - pendingCloseShortLots)
-      : orderAction === "close-long"
+      : action === "close-long"
         ? Math.max(0, currentLongLots - pendingCloseLongLots)
         : Number.POSITIVE_INFINITY;
-  const isOrderQuantityValid = orderLots <= closeOrderAvailable;
-  const canPlaceOrder =
+  const canPlaceOrderAction = (action: OrderAction) =>
     Boolean(dateInputValue) &&
     selectedDailyCandles.length > 0 &&
-    isOrderQuantityValid;
+    orderLots <= getCloseOrderAvailable(action);
   const profitClassName = (value: number) =>
     value > 0
       ? "profit-positive"
@@ -2412,10 +2379,11 @@ export default function App() {
         ? "profit-negative"
         : "profit-neutral";
 
-  const placeOrder = () => {
+  const placeOrder = (action: OrderAction = orderAction) => {
     if (!dateInputValue) return;
 
-    if (!isOrderQuantityValid) {
+    const actionCloseOrderAvailable = getCloseOrderAvailable(action);
+    if (orderLots > actionCloseOrderAvailable) {
       playEffect("error");
       setOrderMessage("保有している玉数を超えて返済することはできません");
       return;
@@ -2441,12 +2409,12 @@ export default function App() {
     }
 
     const closingPositions =
-      orderAction === "close-short"
+      action === "close-short"
         ? currentBook.shortPositions.slice(
             pendingCloseShortLots,
             pendingCloseShortLots + orderLots
           )
-        : orderAction === "close-long"
+        : action === "close-long"
           ? currentBook.longPositions.slice(
               pendingCloseLongLots,
               pendingCloseLongLots + orderLots
@@ -2461,7 +2429,7 @@ export default function App() {
         : orderLots * sharesPerLot;
     const newOrder: PendingOrder = {
       id: createId("order"),
-      action: orderAction,
+      action,
       lots: orderLots,
       shares: orderShares,
       sharesPerLot,
@@ -4277,22 +4245,40 @@ export default function App() {
                 "add-long",
                 "close-long",
               ] as OrderAction[]
-            ).map((action) => (
-              <button
-                key={action}
-                type="button"
-                className={`order-action ${
-                  orderAction === action ? "is-selected" : ""
-                } ${action.includes("short") ? "is-short" : "is-long"}`}
-                onClick={() => {
-                  setOrderAction(action);
-                  setOrderMessage("");
-                }}
-              >
-                <strong>{orderActionLabel[action]}</strong>
-                <span>{orderActionSubLabel[action]}</span>
-              </button>
-            ))}
+            ).map((action) => {
+              const isEnabled = canPlaceOrderAction(action);
+              const actionCloseOrderAvailable = getCloseOrderAvailable(action);
+              const isCloseAction =
+                action === "close-short" || action === "close-long";
+
+              return (
+                <button
+                  key={action}
+                  type="button"
+                  className={`order-action quick-order-action ${
+                    action.includes("short") ? "is-short" : "is-long"
+                  }`}
+                  onClick={() => {
+                    setOrderAction(action);
+                    setOrderMessage("");
+                    placeOrder(action);
+                  }}
+                  disabled={!isEnabled}
+                  title={
+                    !isEnabled && isCloseAction
+                      ? `返済可能は${actionCloseOrderAvailable}玉まで`
+                      : `${orderLots}玉で${orderActionLabel[action]}`
+                  }
+                >
+                  <strong>{quickOrderLabel[action]}</strong>
+                  <span>
+                    {isCloseAction && !isEnabled
+                      ? `返済可能 ${actionCloseOrderAvailable}玉`
+                      : `${orderLots}玉`}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
           <div className="lot-control-row">
@@ -4380,24 +4366,6 @@ export default function App() {
               ))}
             </div>
           )}
-
-          <div className="order-preview">
-            <span>注文後の建玉</span>
-            <strong>
-              {projectedShortLots} - {projectedLongLots}
-            </strong>
-          </div>
-
-          <button
-            type="button"
-            className="submit-order-button"
-            onClick={placeOrder}
-            disabled={!canPlaceOrder}
-          >
-            {isOrderQuantityValid
-              ? orderSubmitLabel[orderAction]
-              : `返済可能は${closeOrderAvailable}玉まで`}
-          </button>
 
           {orderMessage && <div className="order-message">{orderMessage}</div>}
         </section>
