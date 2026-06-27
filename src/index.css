@@ -15,6 +15,9 @@
   --blue: #3b82f6;
   --green: #30c77b;
   --red: #ef6464;
+  --app-bg: #0d1420;
+  --control-bg: #17212e;
+  --control-active-bg: #2d6fd2;
 }
 
 * {
@@ -49,7 +52,8 @@ button {
   position: relative;
   height: 100%;
   padding: 6px 338px 6px 8px !important;
-  background: #0d1420 !important;
+  color: var(--text);
+  background: var(--app-bg) !important;
   transition:
     padding-right 180ms ease,
     padding-left 180ms ease;
@@ -84,7 +88,7 @@ button {
   flex: 0 0 auto;
   min-width: 0;
   padding: 2px 2px 5px;
-  border-bottom: 1px solid #202b38;
+  border-bottom: 1px solid var(--border);
 }
 
 .paint-practice-open .chart-toolbar {
@@ -131,9 +135,9 @@ button {
   min-width: 190px;
   min-height: 34px !important;
   padding: 5px 34px 5px 11px !important;
-  color: #f4f7fb !important;
-  background-color: #17212e !important;
-  border: 1px solid #3a4b60 !important;
+  color: var(--text) !important;
+  background-color: var(--control-bg) !important;
+  border: 1px solid var(--border-strong) !important;
   border-radius: 5px !important;
   font-size: 15px !important;
   font-weight: 700;
@@ -153,14 +157,14 @@ button {
   gap: 7px !important;
   min-height: 34px;
   padding: 3px 5px 3px 9px;
-  color: #cbd5e1;
-  background: #121b27;
-  border: 1px solid #273547;
+  color: var(--text);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
   border-radius: 5px;
 }
 
 .toolbar-group-label {
-  color: #7f8da0;
+  color: var(--muted);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -169,17 +173,17 @@ button {
   display: inline-grid;
   grid-template-columns: repeat(3, minmax(48px, auto));
   overflow: hidden;
-  border: 1px solid #344459;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
 }
 
 .segmented-control button {
   min-height: 26px !important;
   padding: 3px 11px !important;
-  color: #b7c2d0 !important;
-  background: #182331 !important;
+  color: var(--muted) !important;
+  background: var(--panel-muted) !important;
   border: 0 !important;
-  border-right: 1px solid #344459 !important;
+  border-right: 1px solid var(--border-strong) !important;
   border-radius: 0 !important;
   cursor: pointer;
   font-size: 12px !important;
@@ -191,7 +195,7 @@ button {
 
 .segmented-control button.is-active {
   color: #fff !important;
-  background: #2d6fd2 !important;
+  background: var(--control-active-bg) !important;
 }
 
 .display-bars-group {
@@ -201,16 +205,16 @@ button {
 .display-bars-select {
   min-height: 26px !important;
   padding: 3px 28px 3px 8px !important;
-  color: #e4eaf2 !important;
-  background-color: #182331 !important;
-  border: 1px solid #344459 !important;
+  color: var(--text) !important;
+  background-color: var(--panel-muted) !important;
+  border: 1px solid var(--border-strong) !important;
   border-radius: 4px !important;
   font-size: 12px !important;
 }
 
 .visible-bars-count {
   min-width: 76px;
-  color: #aebbd0;
+  color: var(--muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -227,9 +231,9 @@ button {
 .bar-navigation-button {
   min-height: 29px !important;
   padding: 4px 10px !important;
-  color: #c8d2df !important;
-  background: #17212d !important;
-  border-color: #334256 !important;
+  color: var(--text) !important;
+  background: var(--control-bg) !important;
+  border-color: var(--border-strong) !important;
   border-radius: 4px !important;
   font-size: 12px !important;
 }
@@ -238,9 +242,9 @@ button {
   min-width: 206px !important;
   min-height: 29px;
   padding: 4px 11px !important;
-  color: #f4f7fb !important;
-  background: #1b2736 !important;
-  border-color: #40526a !important;
+  color: var(--text) !important;
+  background: var(--panel-muted) !important;
+  border-color: var(--border-strong) !important;
   border-radius: 4px !important;
   font-size: 12px !important;
   font-weight: 650;
@@ -252,9 +256,9 @@ button {
   gap: 7px;
   min-height: 29px;
   padding: 4px 9px;
-  color: #b8c7d9;
-  background: #15202c;
-  border: 1px dashed #3b4d62;
+  color: var(--muted);
+  background: var(--control-bg);
+  border: 1px dashed var(--border-strong);
   border-radius: 4px;
   cursor: pointer;
   font-size: 11px;
@@ -262,16 +266,16 @@ button {
 }
 
 .selected-date-button:disabled {
-  color: #647286;
+  color: var(--muted);
   cursor: default;
   opacity: 0.72;
 }
 
 .selected-date-button kbd {
   padding: 1px 5px;
-  color: #dce6f1;
-  background: #253345;
-  border: 1px solid #42536a;
+  color: var(--text);
+  background: var(--panel-muted);
+  border: 1px solid var(--border-strong);
   border-radius: 3px;
   font-family: inherit;
   font-size: 9px;
@@ -282,10 +286,10 @@ button {
   min-height: 29px;
   padding: 4px 10px !important;
   gap: 12px !important;
-  color: #aeb9c8 !important;
+  color: var(--muted) !important;
   background: transparent !important;
   border-color: transparent !important;
-  border-left-color: #2c394a !important;
+  border-left-color: var(--border) !important;
   border-radius: 0 !important;
   font-size: 12px !important;
 }
@@ -318,8 +322,8 @@ button {
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 8px;
   padding: 10px;
-  color: #dbe4ef;
-  background: #0c1420;
+  color: var(--text);
+  background: var(--app-bg);
 }
 
 .paint-canvas-toolbar {
@@ -329,8 +333,8 @@ button {
   gap: 12px;
   min-height: 40px;
   padding: 7px 10px;
-  background: #131e2b;
-  border: 1px solid #2c3b4e;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
   border-radius: 5px;
 }
 
@@ -345,7 +349,7 @@ button {
 
 .paint-canvas-toolbar > div > span {
   margin-top: 2px;
-  color: #8492a6;
+  color: var(--muted);
   font-size: 10px;
 }
 
@@ -354,14 +358,14 @@ button {
   grid-template-columns: 28px 52px 28px;
   align-items: center;
   overflow: hidden;
-  border: 1px solid #35465b;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
 }
 
 .paint-canvas-zoom button {
   height: 27px;
-  color: #8996a8;
-  background: #192433;
+  color: var(--muted);
+  background: var(--panel-muted);
   border: 0;
 }
 
@@ -377,8 +381,8 @@ button {
   justify-content: center;
   min-height: 0;
   overflow: hidden;
-  background: #101a28;
-  border: 1px solid #3a4b60;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
 }
 
@@ -395,7 +399,7 @@ button {
   max-width: 100%;
   max-height: 100%;
   touch-action: none;
-  background: #101827;
+  background: var(--panel-bg);
 }
 
 .paint-inline-text-input {
@@ -407,7 +411,7 @@ button {
   width: 310px;
   min-width: 0;
   padding: 5px;
-  background: rgba(10, 18, 29, 0.94);
+  background: color-mix(in srgb, var(--panel-bg) 94%, transparent);
   border: 1px solid currentColor;
   border-radius: 3px;
   outline: 2px solid rgba(255, 255, 255, 0.12);
@@ -419,8 +423,8 @@ button {
 .paint-inline-text-input input {
   min-width: 0;
   padding: 4px 6px;
-  background: #111b29;
-  border: 1px solid #52647a;
+  background: var(--control-bg);
+  border: 1px solid var(--border-strong);
   border-radius: 3px;
   outline: none;
   font-family: "Yu Gothic UI", sans-serif;
@@ -428,23 +432,23 @@ button {
 }
 
 .paint-inline-text-input input::placeholder {
-  color: #8795a8;
+  color: var(--muted);
 }
 
 .paint-inline-text-input button {
   min-width: 38px;
   padding: 3px 7px;
-  color: #e8eef6;
-  background: #26364a;
-  border: 1px solid #4a6078;
+  color: var(--text);
+  background: var(--panel-muted);
+  border: 1px solid var(--border-strong);
   border-radius: 3px;
   cursor: pointer;
 }
 
 .paint-inline-text-input button[type="submit"] {
   color: #fff;
-  background: #2563b8;
-  border-color: #4d8ce2;
+  background: var(--control-active-bg);
+  border-color: var(--blue);
 }
 
 .paint-placeholder-grid {
@@ -520,9 +524,9 @@ button {
   gap: 6px;
   transform: translate(-50%, -50%);
   padding: 16px 20px;
-  color: #dce6f2;
-  background: rgba(12, 20, 32, 0.88);
-  border: 1px solid #40536a;
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel-bg) 88%, transparent);
+  border: 1px solid var(--border-strong);
   border-radius: 5px;
   text-align: center;
 }
@@ -532,7 +536,7 @@ button {
 }
 
 .paint-placeholder-message span {
-  color: #8f9eb1;
+  color: var(--muted);
   font-size: 11px;
 }
 
@@ -542,7 +546,7 @@ button {
 }
 
 .paint-note-area span {
-  color: #8e9caf;
+  color: var(--muted);
   font-size: 10px;
 }
 
@@ -551,9 +555,9 @@ button {
   height: 56px;
   resize: none;
   padding: 8px 9px;
-  color: #e5ebf3;
-  background: #121c29;
-  border: 1px solid #2f4054;
+  color: var(--text);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 11px;
   line-height: 1.4;
@@ -569,9 +573,9 @@ button {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  color: #e5e7eb;
-  background: #111923;
-  border: 1px solid #314054;
+  color: var(--text);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
   text-align: left;
   transform: translateX(calc(-100% - 12px));
@@ -600,9 +604,9 @@ button {
   width: 42px;
   min-height: 112px;
   padding: 7px 4px;
-  color: #dbe5f1;
-  background: #1b2633;
-  border: 1px solid #3a495d;
+  color: var(--text);
+  background: var(--panel-bg);
+  border: 1px solid var(--border-strong);
   border-radius: 0 5px 5px 0;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
   transform: translateY(-50%);
@@ -626,7 +630,7 @@ button {
   justify-content: space-between;
   gap: 10px;
   padding: 14px;
-  border-bottom: 1px solid #2a384a;
+  border-bottom: 1px solid var(--border);
 }
 
 .paint-panel-header h2,
@@ -635,13 +639,13 @@ button {
 }
 
 .paint-panel-header h2 {
-  color: #f5f7fb;
+  color: var(--text);
   font-size: 16px;
 }
 
 .paint-panel-header p {
   margin-top: 6px;
-  color: #8c9aad;
+  color: var(--muted);
   font-size: 10px;
   line-height: 1.5;
 }
@@ -651,9 +655,9 @@ button {
   width: 28px;
   height: 28px;
   padding: 0;
-  color: #d9e2ec;
-  background: #1a2634;
-  border: 1px solid #39495d;
+  color: var(--text);
+  background: var(--panel-muted);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   cursor: pointer;
   font-size: 18px;
@@ -672,13 +676,13 @@ button {
   justify-content: center;
   gap: 4px;
   margin-bottom: 10px;
-  color: #8291a4;
+  color: var(--muted);
   font-size: 9px;
   white-space: nowrap;
 }
 
 .paint-workflow b {
-  color: #4f6075;
+  color: var(--border-strong);
 }
 
 .capture-chart-button {
@@ -690,8 +694,8 @@ button {
   min-height: 40px;
   padding: 7px 9px;
   color: #fff;
-  background: #286bc5;
-  border: 1px solid #5594e5;
+  background: var(--control-active-bg);
+  border: 1px solid var(--blue);
   border-radius: 5px;
   cursor: pointer;
   font-size: 12px;
@@ -704,19 +708,19 @@ button {
 
 .capture-chart-help {
   margin: 5px 0 12px;
-  color: #748398;
+  color: var(--muted);
   font-size: 9px;
   text-align: center;
 }
 
 .paint-control-section {
   padding: 11px 0;
-  border-top: 1px solid #283648;
+  border-top: 1px solid var(--border);
 }
 
 .paint-control-section h3 {
   margin: 0 0 8px;
-  color: #b7c2d1;
+  color: var(--text);
   font-size: 11px;
 }
 
@@ -732,9 +736,9 @@ button {
   gap: 7px;
   min-height: 34px;
   padding: 5px 8px;
-  color: #c9d3df;
-  background: #182330;
-  border: 1px solid #334256;
+  color: var(--text);
+  background: var(--control-bg);
+  border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
   font-size: 10px;
@@ -743,15 +747,15 @@ button {
 
 .paint-tool-grid button span {
   width: 18px;
-  color: #e8eef6;
+  color: var(--text);
   font-size: 16px;
   text-align: center;
 }
 
 .paint-tool-grid button.is-selected {
   color: #fff;
-  background: #243b5b;
-  border-color: #4d8ce2;
+  background: var(--control-active-bg);
+  border-color: var(--blue);
 }
 
 .paint-eraser-icon {
@@ -818,14 +822,14 @@ button {
   width: 27px;
   height: 27px;
   padding: 0;
-  border: 2px solid #344357;
+  border: 2px solid var(--border-strong);
   border-radius: 4px;
   cursor: pointer;
 }
 
 .paint-color-row > button.is-selected,
 .paint-custom-swatch > button:first-child.is-selected {
-  outline: 2px solid #cbd5e1;
+  outline: 2px solid var(--text);
   outline-offset: 2px;
 }
 
@@ -839,7 +843,7 @@ button {
   width: 27px;
   height: 27px;
   padding: 0;
-  border: 2px solid #344357;
+  border: 2px solid var(--border-strong);
   border-radius: 4px;
   cursor: pointer;
 }
@@ -863,8 +867,8 @@ button {
 .paint-custom-color {
   display: grid;
   place-items: center;
-  color: #aab6c5;
-  background: #182330;
+  color: var(--muted);
+  background: var(--control-bg);
   font-size: 15px;
 }
 
@@ -887,8 +891,8 @@ button {
   display: grid;
   place-items: center;
   min-height: 30px;
-  background: #182330;
-  border: 1px solid #334256;
+  background: var(--control-bg);
+  border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
 }
@@ -897,13 +901,13 @@ button {
   display: block;
   width: 28px;
   max-height: 6px;
-  background: #dbe4ef;
+  background: var(--text);
   border-radius: 99px;
 }
 
 .paint-width-row button.is-selected {
-  background: #243b5b;
-  border-color: #4d8ce2;
+  background: var(--control-active-bg);
+  border-color: var(--blue);
 }
 
 .paint-action-grid {
@@ -914,15 +918,15 @@ button {
 
 .paint-action-grid button {
   min-height: 31px;
-  color: #8996a8;
-  background: #17212d;
-  border: 1px solid #304054;
+  color: var(--muted);
+  background: var(--control-bg);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 10px;
 }
 
 .paint-action-grid button:not(:disabled) {
-  color: #cad5e2;
+  color: var(--text);
   cursor: pointer;
 }
 
@@ -935,22 +939,22 @@ button {
   grid-template-columns: 1fr 1fr;
   gap: 6px;
   padding: 10px 12px;
-  border-top: 1px solid #2a384a;
+  border-top: 1px solid var(--border);
 }
 
 .paint-panel-footer button {
   min-height: 32px;
-  color: #d4dde8;
-  background: #1a2634;
-  border: 1px solid #37485d;
+  color: var(--text);
+  background: var(--panel-muted);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   font-size: 10px;
 }
 
 .paint-panel-footer button:first-child {
   color: #fff;
-  background: #286bc5;
-  border-color: #5594e5;
+  background: var(--control-active-bg);
+  border-color: var(--blue);
 }
 
 .paint-panel-footer button:last-child {
@@ -965,9 +969,9 @@ button {
 .paint-status-message {
   margin: 8px 0 0;
   padding: 7px 8px;
-  color: #b9c8da;
-  background: #172332;
-  border: 1px solid #2e4054;
+  color: var(--text);
+  background: var(--panel-muted);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 10px;
   line-height: 1.4;
@@ -989,9 +993,9 @@ button {
   width: min(880px, 100%);
   max-height: min(680px, calc(100dvh - 48px));
   overflow: hidden;
-  color: #e5e7eb;
-  background: #111923;
-  border: 1px solid #344357;
+  color: var(--text);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
 }
@@ -1001,19 +1005,19 @@ button {
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px;
-  border-bottom: 1px solid #2c394a;
+  border-bottom: 1px solid var(--border);
 }
 
 .paint-history-header h2 {
   margin: 0;
-  color: #f3f6fa;
+  color: var(--text);
   font-size: 16px;
 }
 
 .paint-history-header span {
   display: block;
   margin-top: 3px;
-  color: #8492a5;
+  color: var(--muted);
   font-size: 10px;
 }
 
@@ -1021,9 +1025,9 @@ button {
   width: 30px;
   height: 30px;
   padding: 0;
-  color: #dce5ef;
-  background: #1b2633;
-  border: 1px solid #3a495d;
+  color: var(--text);
+  background: var(--panel-muted);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   cursor: pointer;
   font-size: 20px;
@@ -1031,7 +1035,7 @@ button {
 
 .empty-paint-history {
   padding: 48px 16px;
-  color: #8290a2;
+  color: var(--muted);
   text-align: center;
   font-size: 13px;
 }
@@ -1055,8 +1059,8 @@ button {
   width: 180px;
   aspect-ratio: 16 / 9;
   object-fit: cover;
-  background: #0c1420;
-  border: 1px solid #344459;
+  background: var(--app-bg);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
 }
 
@@ -1072,13 +1076,13 @@ button {
 
 .paint-history-item span {
   margin-top: 3px;
-  color: #afbac8;
+  color: var(--muted);
   font-size: 11px;
 }
 
 .paint-history-item small {
   margin-top: 2px;
-  color: #728196;
+  color: var(--muted);
   font-size: 9px;
 }
 
@@ -1086,7 +1090,7 @@ button {
   max-width: 460px;
   margin: 7px 0 0;
   overflow: hidden;
-  color: #95a3b5;
+  color: var(--muted);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1100,9 +1104,9 @@ button {
 .paint-history-actions button {
   min-width: 76px;
   min-height: 29px;
-  color: #d4deea;
-  background: #1a2634;
-  border: 1px solid #39495d;
+  color: var(--text);
+  background: var(--panel-muted);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   cursor: pointer;
   font-size: 10px;
@@ -1147,7 +1151,7 @@ button {
 
 .trade-section h2 {
   margin: 0;
-  color: #f3f6fa;
+  color: var(--text);
   font-size: 14px;
   line-height: 1.3;
   font-weight: 700;
@@ -1169,9 +1173,9 @@ button {
 
 .panel-toggle-button,
 .panel-open-button {
-  color: #dbe5f1;
-  background: #1b2633;
-  border: 1px solid #3a495d;
+  color: var(--text);
+  background: var(--panel-muted);
+  border: 1px solid var(--border-strong);
   cursor: pointer;
 }
 
@@ -1214,9 +1218,9 @@ button {
 
 .mock-badge {
   padding: 2px 6px;
-  color: #8fa0b6;
-  background: #1a2532;
-  border: 1px solid #304055;
+  color: var(--muted);
+  background: var(--panel-muted);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 10px;
 }
@@ -1255,7 +1259,7 @@ button {
 }
 
 .position-separator {
-  color: #667386;
+  color: var(--muted);
   text-align: center;
   font-size: 25px;
   line-height: 1.2;
@@ -1280,9 +1284,9 @@ button {
   min-width: 50px;
   height: 25px;
   padding: 0 7px;
-  color: #aab6c5;
+  color: var(--muted);
   background: transparent;
-  border: 1px solid #344256;
+  border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
   font-size: 11px;
@@ -1319,18 +1323,18 @@ button {
 }
 
 .profit-neutral {
-  color: #d7dee8;
+  color: var(--text);
 }
 
 .profit-total {
   margin-top: 4px;
   padding-top: 7px;
-  border-top: 1px solid #293646;
+  border-top: 1px solid var(--border);
 }
 
 .profit-total dt,
 .profit-total dd {
-  color: #f4f7fb;
+  color: var(--text);
   font-size: 15px;
   font-weight: 700;
 }
@@ -1357,9 +1361,9 @@ button {
 .order-action {
   min-height: 48px;
   padding: 6px 7px;
-  color: #d7dee8;
-  background: #17202b;
-  border: 1px solid #334154;
+  color: var(--text);
+  background: var(--control-bg);
+  border: 1px solid var(--border);
   border-radius: 5px;
   cursor: pointer;
   text-align: left;
@@ -1377,12 +1381,12 @@ button {
 
 .order-action span {
   margin-top: 2px;
-  color: #7f8da0;
+  color: var(--muted);
   font-size: 10px;
 }
 
 .order-action:hover {
-  border-color: #53657a;
+  border-color: var(--border-strong);
 }
 
 .order-action:disabled,
@@ -1392,9 +1396,9 @@ button {
 }
 
 .order-action.is-selected {
-  background: #213047;
-  border-color: #4c8df5;
-  box-shadow: inset 3px 0 0 #4c8df5;
+  background: color-mix(in srgb, var(--control-active-bg) 22%, var(--panel-bg));
+  border-color: var(--blue);
+  box-shadow: inset 3px 0 0 var(--blue);
 }
 
 .order-action.is-selected.is-short {
@@ -1416,7 +1420,7 @@ button {
 }
 
 .field-label {
-  color: #dce3ec;
+  color: var(--text);
   font-size: 12px;
   font-weight: 650;
 }
@@ -1424,13 +1428,13 @@ button {
 .lot-summary {
   display: block;
   margin-top: 3px;
-  color: #7f8da0;
+  color: var(--muted);
   font-size: 10px;
 }
 
 .order-detail-settings {
   margin-top: 8px;
-  color: #8fa0b5;
+  color: var(--muted);
   font-size: 11px;
 }
 
@@ -1438,7 +1442,7 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: #93a4b8;
+  color: var(--muted);
   cursor: pointer;
   list-style: none;
   user-select: none;
@@ -1450,7 +1454,7 @@ button {
 
 .order-detail-settings summary::after {
   content: ">";
-  color: #64748b;
+  color: var(--muted);
   font-size: 10px;
   transition: transform 0.15s ease;
 }
@@ -1466,9 +1470,9 @@ button {
   gap: 8px;
   margin-top: 8px;
   padding: 7px 9px;
-  color: #8fa0b5;
-  background: rgba(30, 41, 59, 0.34);
-  border: 1px solid rgba(71, 85, 105, 0.44);
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel-muted) 74%, transparent);
+  border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 11px;
 }
@@ -1478,7 +1482,7 @@ button {
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
-  color: #dce4ee;
+  color: var(--text);
 }
 
 .lot-setting input {
@@ -1486,9 +1490,9 @@ button {
   height: 22px;
   margin: 0;
   padding: 1px 4px;
-  color: #e8edf4;
-  background: #17212d;
-  border: 1px solid #344459;
+  color: var(--text);
+  background: var(--control-bg);
+  border: 1px solid var(--border-strong);
   border-radius: 3px;
   font-size: 10px;
   text-align: right;
@@ -1505,15 +1509,15 @@ button {
   gap: 8px;
   margin-top: 8px;
   padding: 7px 9px;
-  color: #8fa0b5;
-  background: rgba(30, 41, 59, 0.44);
-  border: 1px solid rgba(71, 85, 105, 0.54);
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel-muted) 80%, transparent);
+  border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 11px;
 }
 
 .instrument-unit-summary strong {
-  color: #e2e8f0;
+  color: var(--text);
   font-weight: 700;
   text-align: right;
 }
@@ -1523,7 +1527,7 @@ button {
   grid-template-columns: 30px 52px 30px;
   align-items: center;
   height: 32px;
-  border: 1px solid #3a485b;
+  border: 1px solid var(--border-strong);
   border-radius: 5px;
   overflow: hidden;
 }
@@ -1531,8 +1535,8 @@ button {
 .lot-stepper button {
   height: 100%;
   padding: 0;
-  color: #dce4ee;
-  background: #1b2633;
+  color: var(--text);
+  background: var(--panel-muted);
   border: 0;
   cursor: pointer;
   font-size: 18px;
@@ -1554,23 +1558,23 @@ button {
 }
 
 .execution-row {
-  color: #8f9bad;
+  color: var(--muted);
 }
 
 .execution-row strong {
-  color: #dfe5ed;
+  color: var(--text);
 }
 
 .order-preview {
   padding: 8px 9px;
-  background: #17212d;
-  border: 1px solid #2d3b4e;
+  background: var(--control-bg);
+  border: 1px solid var(--border);
   border-radius: 5px;
-  color: #9ba8ba;
+  color: var(--muted);
 }
 
 .order-preview strong {
-  color: #f2f5f9;
+  color: var(--text);
   font-size: 16px;
   font-variant-numeric: tabular-nums;
 }
@@ -1580,8 +1584,8 @@ button {
   min-height: 36px;
   margin-top: 9px;
   color: #fff;
-  background: #2f6ed2;
-  border: 1px solid #4b88e7;
+  background: var(--control-active-bg);
+  border: 1px solid var(--blue);
   border-radius: 5px;
   cursor: pointer;
   font-size: 13px;
@@ -1589,13 +1593,13 @@ button {
 }
 
 .submit-order-button:hover {
-  background: #3979df;
+  filter: brightness(1.08);
 }
 
 .submit-order-button:disabled {
-  color: #8390a1;
-  background: #253140;
-  border-color: #344255;
+  color: var(--muted);
+  background: var(--panel-muted);
+  border-color: var(--border);
   cursor: not-allowed;
 }
 
@@ -1604,8 +1608,8 @@ button {
   gap: 7px;
   margin-top: 10px;
   padding: 9px;
-  background: #1b2633;
-  border: 1px solid #40526a;
+  background: var(--panel-muted);
+  border: 1px solid var(--border-strong);
   border-radius: 5px;
 }
 
@@ -1616,21 +1620,30 @@ button {
   gap: 10px;
 }
 
+.pending-order-row {
+  padding-top: 6px;
+  border-top: 1px solid rgba(71, 85, 105, 0.55);
+}
+
+.pending-order-row strong {
+  flex: 1 1 auto;
+}
+
 .pending-order span {
-  color: #8e9bad;
+  color: var(--muted);
   font-size: 10px;
 }
 
 .pending-order strong {
-  color: #edf2f8;
+  color: var(--text);
   font-size: 11px;
 }
 
 .pending-order button {
   min-height: 28px;
-  color: #d4dce6;
-  background: #202d3b;
-  border: 1px solid #3a4a5e;
+  color: var(--text);
+  background: var(--control-bg);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   cursor: pointer;
   font-size: 11px;
@@ -1638,7 +1651,7 @@ button {
 
 .order-message {
   margin-top: 7px;
-  color: #9fb2c8;
+  color: var(--muted);
   font-size: 10px;
   line-height: 1.35;
 }
@@ -1652,9 +1665,9 @@ button {
 
 .trade-panel-footer button {
   min-height: 30px;
-  color: #cbd4df;
-  background: #18222e;
-  border: 1px solid #344256;
+  color: var(--text);
+  background: var(--panel-muted);
+  border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
   font-size: 11px;
@@ -1667,7 +1680,7 @@ button {
 
 .trade-panel-footer .reset-button {
   grid-column: 1 / -1;
-  color: #8d99a9;
+  color: var(--muted);
   background: transparent;
   border-color: transparent;
 }
@@ -1688,9 +1701,9 @@ button {
   width: min(760px, 100%);
   max-height: min(620px, calc(100dvh - 48px));
   overflow: hidden;
-  color: #e5e7eb;
-  background: #111923;
-  border: 1px solid #344357;
+  color: var(--text);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
 }
@@ -1700,19 +1713,19 @@ button {
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px;
-  border-bottom: 1px solid #2c394a;
+  border-bottom: 1px solid var(--border);
 }
 
 .trade-log-header h2 {
   margin: 0;
-  color: #f3f6fa;
+  color: var(--text);
   font-size: 16px;
 }
 
 .trade-log-header span {
   display: block;
   margin-top: 3px;
-  color: #8492a5;
+  color: var(--muted);
   font-size: 11px;
 }
 
@@ -1720,9 +1733,9 @@ button {
   width: 30px;
   height: 30px;
   padding: 0;
-  color: #dce5ef;
-  background: #1b2633;
-  border: 1px solid #3a495d;
+  color: var(--text);
+  background: var(--panel-muted);
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   cursor: pointer;
   font-size: 20px;
@@ -1730,7 +1743,7 @@ button {
 
 .empty-trade-log {
   padding: 42px 16px;
-  color: #8290a2;
+  color: var(--muted);
   text-align: center;
   font-size: 13px;
 }
@@ -1746,7 +1759,7 @@ button {
   grid-template-columns: 1.25fr 1fr 1fr 0.8fr 0.9fr;
   gap: 14px;
   padding: 10px 11px;
-  border-bottom: 1px solid #253242;
+  border-bottom: 1px solid var(--border);
 }
 
 .trade-log-row > div {
@@ -1767,14 +1780,14 @@ button {
 }
 
 .trade-log-row span {
-  color: #7f8da0;
+  color: var(--muted);
   font-size: 10px;
 }
 
 .trade-log-row strong {
   margin-top: 2px;
   overflow: hidden;
-  color: #e8edf4;
+  color: var(--text);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;

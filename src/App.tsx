@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import Papa from "papaparse";
 import {
   createChart,
@@ -13,12 +13,19 @@ import {
 } from "lightweight-charts";
 import { DATA_FILES, getInstrumentDefinition } from "./dataFiles";
 
+declare global {
+  interface Window {
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
+
 const BAR_SPACING = 8;
 const MIN_AUTO_DISPLAY_BARS = 30;
 const MAX_AUTO_DISPLAY_BARS = 320;
 const WHEEL_NAVIGATION_THRESHOLD = 40;
 const TRADING_BOOKS_STORAGE_KEY = "stock-practice-trading-books-v1";
 const CHART_SETTINGS_STORAGE_KEY = "stock-practice-chart-settings-v1";
+const SOUND_ENABLED_STORAGE_KEY = "stock-practice-sound-enabled-v1";
 const PAINT_MARKS_STORAGE_KEY = "stock-practice-paint-marks-v1";
 const PAINT_CUSTOM_COLORS_STORAGE_KEY = "stock-practice-paint-custom-colors-v1";
 const PAINT_PRACTICE_DB_NAME = "stock-practice-paint-db";
@@ -28,7 +35,8 @@ const PAINT_PRACTICE_STORE_NAME = "paint-practices";
 type Timeframe = "daily" | "weekly" | "monthly";
 type VisibleLogicalRange = { from: number; to: number };
 type DisplayBarsOption = "auto" | "50" | "75" | "100" | "150" | "200";
-type SettingsTab = "ma" | "appearance";
+type SettingsTab = "ma" | "appearance" | "trading";
+type ExecutionTiming = "next-open" | "same-close";
 type ChartTheme = "dark" | "dark-blue" | "black" | "light" | "light-gray" | "ivory";
 type SettingSize = "small" | "medium" | "large";
 type MaLineStyleOption =
@@ -108,6 +116,9 @@ type ChartAppearanceDraft = {
   bullishColor: string;
   bearishColor: string;
 };
+type TradingSettingsDraft = {
+  executionTiming: ExecutionTiming;
+};
 type OrderAction = "add-short" | "close-short" | "add-long" | "close-long";
 type PositionSide = "short" | "long";
 
@@ -152,6 +163,7 @@ type PendingOrder = {
   sharesPerLot: number;
   orderedDate: string;
   executeDate: string;
+  executionTiming: ExecutionTiming;
 };
 
 type TradeLog = {
@@ -169,6 +181,7 @@ type TradingBook = {
   shortPositions: PositionLot[];
   longPositions: PositionLot[];
   pendingOrder: PendingOrder | null;
+  pendingOrders: PendingOrder[];
   logs: TradeLog[];
 };
 
@@ -177,6 +190,7 @@ function createEmptyTradingBook(): TradingBook {
     shortPositions: [],
     longPositions: [],
     pendingOrder: null,
+    pendingOrders: [],
     logs: [],
   };
 }
@@ -241,6 +255,8 @@ function normalizePendingOrder(value: unknown): PendingOrder | null {
     sharesPerLot: item.sharesPerLot,
     orderedDate: item.orderedDate,
     executeDate: item.executeDate,
+    executionTiming:
+      item.executionTiming === "same-close" ? "same-close" : "next-open",
   };
 }
 
@@ -277,6 +293,14 @@ function normalizeTradingBook(value: unknown): TradingBook {
   if (!value || typeof value !== "object") return createEmptyTradingBook();
 
   const item = value as Partial<TradingBook>;
+  const legacyPendingOrder = normalizePendingOrder(item.pendingOrder);
+  const pendingOrders = Array.isArray(item.pendingOrders)
+    ? item.pendingOrders
+        .map(normalizePendingOrder)
+        .filter((order): order is PendingOrder => order !== null)
+    : legacyPendingOrder
+      ? [legacyPendingOrder]
+      : [];
 
   return {
     shortPositions: Array.isArray(item.shortPositions)
@@ -289,7 +313,8 @@ function normalizeTradingBook(value: unknown): TradingBook {
           .map(normalizePositionLot)
           .filter((lot): lot is PositionLot => lot !== null)
       : [],
-    pendingOrder: normalizePendingOrder(item.pendingOrder),
+    pendingOrder: null,
+    pendingOrders,
     logs: Array.isArray(item.logs)
       ? item.logs.map(normalizeTradeLog).filter((log): log is TradeLog => log !== null)
       : [],
@@ -515,6 +540,62 @@ function formatQuantity(value: number, unitLabel: string) {
   return `${value.toLocaleString("ja-JP")}${unitLabel}`;
 }
 
+type SoundEffect = "success" | "trade" | "error" | "camera";
+
+function loadSoundEnabled() {
+  return window.localStorage.getItem(SOUND_ENABLED_STORAGE_KEY) !== "false";
+}
+
+function playSoundEffect(effect: SoundEffect, enabled: boolean) {
+  if (!enabled) return;
+
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+
+  const context = new AudioContextClass();
+  const masterGain = context.createGain();
+  masterGain.gain.setValueAtTime(0.04, context.currentTime);
+  masterGain.connect(context.destination);
+
+  const playTone = (
+    frequency: number,
+    start: number,
+    duration: number,
+    type: OscillatorType = "sine",
+    volume = 1
+  ) => {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(frequency, context.currentTime + start);
+    gain.gain.setValueAtTime(0, context.currentTime + start);
+    gain.gain.linearRampToValueAtTime(volume, context.currentTime + start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(
+      0.001,
+      context.currentTime + start + duration
+    );
+    oscillator.connect(gain);
+    gain.connect(masterGain);
+    oscillator.start(context.currentTime + start);
+    oscillator.stop(context.currentTime + start + duration);
+  };
+
+  if (effect === "camera") {
+    playTone(900, 0, 0.045, "square", 0.7);
+    playTone(2400, 0.055, 0.035, "triangle", 0.45);
+  } else if (effect === "trade") {
+    playTone(660, 0, 0.08, "sine", 0.8);
+    playTone(990, 0.08, 0.12, "sine", 0.65);
+  } else if (effect === "error") {
+    playTone(220, 0, 0.16, "sawtooth", 0.55);
+  } else {
+    playTone(720, 0, 0.07, "triangle", 0.6);
+    playTone(1080, 0.07, 0.09, "triangle", 0.45);
+  }
+
+  window.setTimeout(() => void context.close(), 350);
+}
+
 function formatPrice(value: number, decimals: number) {
   return value.toLocaleString("ja-JP", {
     minimumFractionDigits: decimals,
@@ -524,6 +605,14 @@ function formatPrice(value: number, decimals: number) {
 
 function getMinMove(decimals: number) {
   return decimals <= 0 ? 1 : 1 / 10 ** decimals;
+}
+
+function getExecutionPrice(candle: Candle, timing: ExecutionTiming) {
+  return timing === "same-close" ? candle.close : candle.open;
+}
+
+function getExecutionTimingPriceLabel(timing: ExecutionTiming) {
+  return timing === "same-close" ? "終値" : "始値";
 }
 
 function drawPaintObject(
@@ -658,6 +747,10 @@ const DEFAULT_CHART_APPEARANCE_DRAFT: ChartAppearanceDraft = {
   bearishColor: "#ef4444",
 };
 
+const DEFAULT_TRADING_SETTINGS_DRAFT: TradingSettingsDraft = {
+  executionTiming: "next-open",
+};
+
 const chartThemeLabels: Record<ChartTheme, string> = {
   dark: "ダーク",
   "dark-blue": "ダークブルー",
@@ -777,6 +870,7 @@ function getPaintMarkDisplayText(mark: PaintMark) {
 type StoredChartSettings = {
   maSettings: MaDisplaySetting[];
   appearanceSettings: ChartAppearanceDraft;
+  tradingSettings: TradingSettingsDraft;
 };
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number) {
@@ -863,11 +957,25 @@ function normalizeChartAppearanceDraft(value: unknown): ChartAppearanceDraft {
   };
 }
 
+function normalizeTradingSettingsDraft(value: unknown): TradingSettingsDraft {
+  if (!value || typeof value !== "object") {
+    return DEFAULT_TRADING_SETTINGS_DRAFT;
+  }
+
+  const item = value as Partial<TradingSettingsDraft>;
+
+  return {
+    executionTiming:
+      item.executionTiming === "same-close" ? "same-close" : "next-open",
+  };
+}
+
 function loadChartSettingsFromStorage(): StoredChartSettings {
   if (typeof window === "undefined") {
     return {
       maSettings: DEFAULT_MA_DISPLAY_SETTINGS,
       appearanceSettings: DEFAULT_CHART_APPEARANCE_DRAFT,
+      tradingSettings: DEFAULT_TRADING_SETTINGS_DRAFT,
     };
   }
 
@@ -877,6 +985,7 @@ function loadChartSettingsFromStorage(): StoredChartSettings {
       return {
         maSettings: DEFAULT_MA_DISPLAY_SETTINGS,
         appearanceSettings: DEFAULT_CHART_APPEARANCE_DRAFT,
+        tradingSettings: DEFAULT_TRADING_SETTINGS_DRAFT,
       };
     }
 
@@ -892,6 +1001,7 @@ function loadChartSettingsFromStorage(): StoredChartSettings {
       appearanceSettings: normalizeChartAppearanceDraft(
         parsed.appearanceSettings
       ),
+      tradingSettings: normalizeTradingSettingsDraft(parsed.tradingSettings),
     };
   } catch (error) {
     console.warn("Failed to load chart settings", error);
@@ -899,6 +1009,7 @@ function loadChartSettingsFromStorage(): StoredChartSettings {
     return {
       maSettings: DEFAULT_MA_DISPLAY_SETTINGS,
       appearanceSettings: DEFAULT_CHART_APPEARANCE_DRAFT,
+      tradingSettings: DEFAULT_TRADING_SETTINGS_DRAFT,
     };
   }
 }
@@ -960,6 +1071,93 @@ function getAppBackgroundColor(theme: ChartTheme) {
   if (theme === "ivory") return "#f5efe1";
 
   return "#0f172a";
+}
+
+function getAppThemeStyle(
+  theme: ChartTheme
+): CSSProperties & Record<`--${string}`, string> {
+  if (theme === "light" || theme === "light-gray") {
+    return {
+      "--app-bg": theme === "light" ? "#e5e7eb" : "#e2e8f0",
+      "--panel-bg": "#f8fafc",
+      "--panel-muted": "#eef2f7",
+      "--control-bg": "#ffffff",
+      "--control-active-bg": "#2563eb",
+      "--border": "#cbd5e1",
+      "--border-strong": "#94a3b8",
+      "--text": "#0f172a",
+      "--muted": "#64748b",
+      "--blue": "#2563eb",
+      "--green": "#16a34a",
+      "--red": "#dc2626",
+    };
+  }
+
+  if (theme === "ivory") {
+    return {
+      "--app-bg": "#f5efe1",
+      "--panel-bg": "#fffaf0",
+      "--panel-muted": "#f2ead8",
+      "--control-bg": "#fff7e6",
+      "--control-active-bg": "#2563eb",
+      "--border": "#d8cbb4",
+      "--border-strong": "#b9a98c",
+      "--text": "#1f2937",
+      "--muted": "#7c6f5b",
+      "--blue": "#2563eb",
+      "--green": "#16a34a",
+      "--red": "#dc2626",
+    };
+  }
+
+  if (theme === "black") {
+    return {
+      "--app-bg": "#020617",
+      "--panel-bg": "#050912",
+      "--panel-muted": "#0b1220",
+      "--control-bg": "#0f172a",
+      "--control-active-bg": "#1d4ed8",
+      "--border": "#1e293b",
+      "--border-strong": "#334155",
+      "--text": "#e5e7eb",
+      "--muted": "#94a3b8",
+      "--blue": "#3b82f6",
+      "--green": "#30c77b",
+      "--red": "#ef6464",
+    };
+  }
+
+  if (theme === "dark-blue") {
+    return {
+      "--app-bg": "#081226",
+      "--panel-bg": "#0d1a30",
+      "--panel-muted": "#132540",
+      "--control-bg": "#10203a",
+      "--control-active-bg": "#2563eb",
+      "--border": "#263b59",
+      "--border-strong": "#36547a",
+      "--text": "#e5e7eb",
+      "--muted": "#9fb0c8",
+      "--blue": "#3b82f6",
+      "--green": "#30c77b",
+      "--red": "#ef6464",
+    };
+  }
+
+  return {
+    "--app-bg": "#0f172a",
+    "--panel-bg": "#121923",
+    "--panel-muted": "#18212d",
+    "--control-bg": "#17212e",
+    "--control-active-bg": "#2d6fd2",
+    "--border": "#2b3746",
+    "--border-strong": "#3b4b5e",
+    "--text": "#e5e7eb",
+    "--muted": "#93a0b2",
+    "--blue": "#3b82f6",
+    "--green": "#30c77b",
+    "--red": "#ef6464",
+  };
 }
 
 function hexToRgba(hex: string, opacity: number) {
@@ -1325,6 +1523,7 @@ export default function App() {
   const [isAppearanceSettingsOpen, setIsAppearanceSettingsOpen] =
     useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("appearance");
+  const [soundEnabled, setSoundEnabled] = useState(loadSoundEnabled);
   const [maDisplaySettings, setMaDisplaySettings] = useState<
     MaDisplaySetting[]
   >(() => loadChartSettingsFromStorage().maSettings);
@@ -1332,16 +1531,25 @@ export default function App() {
     useState<ChartAppearanceDraft>(
       () => loadChartSettingsFromStorage().appearanceSettings
     );
+  const [tradingSettings, setTradingSettings] =
+    useState<TradingSettingsDraft>(
+      () => loadChartSettingsFromStorage().tradingSettings
+    );
   const displayBars =
     displayBarsOption === "auto" ? autoDisplayBars : Number(displayBarsOption);
   const currentBook =
     tradingBooks[selectedDataPath] ?? createEmptyTradingBook();
   const currentPaintMarks = paintMarksByStock[selectedDataPath] ?? EMPTY_PAINT_MARKS;
-  const paintTargetDate = selectedChartDate || dateInputValue;
+  const paintTargetDate = dateInputValue;
   const selectedDatePaintMarks = paintTargetDate
     ? currentPaintMarks.filter((mark) => mark.date === paintTargetDate)
     : [];
   const isPaintDrawingReady = isPaintCanvasActive && isPaintCanvasReady;
+
+  const playEffect = useCallback(
+    (effect: SoundEffect) => playSoundEffect(effect, soundEnabled),
+    [soundEnabled]
+  );
 
   const rememberVisibleLogicalRange = useCallback((range: VisibleLogicalRange | null) => {
     if (!range) return null;
@@ -1388,6 +1596,13 @@ export default function App() {
   useEffect(() => {
     savePaintMarksToStorage(paintMarksByStock);
   }, [paintMarksByStock]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      SOUND_ENABLED_STORAGE_KEY,
+      String(soundEnabled)
+    );
+  }, [soundEnabled]);
 
   useEffect(() => {
     const syncViewportHeight = () => {
@@ -1452,90 +1667,100 @@ export default function App() {
       reachedDate: string,
       dailyCandles: Candle[]
     ) => {
-      const pendingOrder = currentBook.pendingOrder;
-      if (
-        !pendingOrder ||
-        reachedDate < pendingOrder.executeDate ||
-        processedOrderIdsRef.current.has(pendingOrder.id)
-      ) {
+      const dueOrders = currentBook.pendingOrders.filter(
+        (order) =>
+          reachedDate >= order.executeDate &&
+          !processedOrderIdsRef.current.has(order.id)
+      );
+      if (dueOrders.length === 0) {
         return;
       }
 
-      const executionCandle = dailyCandles.find(
-        (candle) => candle.time === pendingOrder.executeDate
-      );
-      if (!executionCandle) return;
-      const closingPositions =
-        pendingOrder.action === "close-short"
-          ? currentBook.shortPositions.slice(0, pendingOrder.lots)
-          : pendingOrder.action === "close-long"
-            ? currentBook.longPositions.slice(0, pendingOrder.lots)
-            : [];
-      const executionRealizedProfit =
-        pendingOrder.action === "close-short"
-          ? closingPositions.reduce(
-              (total, position) =>
-                total +
-                (position.entryPrice - executionCandle.open) *
-                  position.sharesPerLot *
-                  selectedInstrument.multiplier,
-              0
-            )
-          : pendingOrder.action === "close-long"
-            ? closingPositions.reduce(
-                (total, position) =>
-                  total +
-                  (executionCandle.open - position.entryPrice) *
-                    position.sharesPerLot *
-                    selectedInstrument.multiplier,
-                0
-              )
-            : null;
-
-      processedOrderIdsRef.current.add(pendingOrder.id);
+      const candleByDate = new Map(dailyCandles.map((candle) => [candle.time, candle]));
+      dueOrders.forEach((order) => processedOrderIdsRef.current.add(order.id));
       setTradingBooks((books) => {
         const book = books[selectedDataPath] ?? createEmptyTradingBook();
-        if (book.pendingOrder?.id !== pendingOrder.id) return books;
+        const executableOrders = book.pendingOrders.filter((order) =>
+          dueOrders.some((dueOrder) => dueOrder.id === order.id)
+        );
+        if (executableOrders.length === 0) return books;
 
         let shortPositions = [...book.shortPositions];
         let longPositions = [...book.longPositions];
+        const newLogs: TradeLog[] = [];
 
-        if (pendingOrder.action === "add-short") {
-          shortPositions.push(
-            ...Array.from({ length: pendingOrder.lots }, () => ({
-              id: createId("short"),
-              side: "short" as const,
-              entryDate: pendingOrder.executeDate,
-              entryPrice: executionCandle.open,
-              sharesPerLot: pendingOrder.sharesPerLot,
-            }))
+        for (const pendingOrder of executableOrders) {
+          const executionCandle = candleByDate.get(pendingOrder.executeDate);
+          if (!executionCandle) continue;
+          const executionPrice = getExecutionPrice(
+            executionCandle,
+            pendingOrder.executionTiming
           );
-        } else if (pendingOrder.action === "add-long") {
-          longPositions.push(
-            ...Array.from({ length: pendingOrder.lots }, () => ({
-              id: createId("long"),
-              side: "long" as const,
-              entryDate: pendingOrder.executeDate,
-              entryPrice: executionCandle.open,
-              sharesPerLot: pendingOrder.sharesPerLot,
-            }))
-          );
-        } else if (pendingOrder.action === "close-short") {
-          shortPositions = shortPositions.slice(pendingOrder.lots);
-        } else {
-          longPositions = longPositions.slice(pendingOrder.lots);
+
+          const closingPositions =
+            pendingOrder.action === "close-short"
+              ? shortPositions.slice(0, pendingOrder.lots)
+              : pendingOrder.action === "close-long"
+                ? longPositions.slice(0, pendingOrder.lots)
+                : [];
+          const executionRealizedProfit =
+            pendingOrder.action === "close-short"
+              ? closingPositions.reduce(
+                  (total, position) =>
+                    total +
+                    (position.entryPrice - executionPrice) *
+                      position.sharesPerLot *
+                      selectedInstrument.multiplier,
+                  0
+                )
+              : pendingOrder.action === "close-long"
+                ? closingPositions.reduce(
+                    (total, position) =>
+                      total +
+                      (executionPrice - position.entryPrice) *
+                        position.sharesPerLot *
+                        selectedInstrument.multiplier,
+                    0
+                  )
+                : null;
+
+          if (pendingOrder.action === "add-short") {
+            shortPositions.push(
+              ...Array.from({ length: pendingOrder.lots }, () => ({
+                id: createId("short"),
+                side: "short" as const,
+                entryDate: pendingOrder.executeDate,
+                entryPrice: executionPrice,
+                sharesPerLot: pendingOrder.sharesPerLot,
+              }))
+            );
+          } else if (pendingOrder.action === "add-long") {
+            longPositions.push(
+              ...Array.from({ length: pendingOrder.lots }, () => ({
+                id: createId("long"),
+                side: "long" as const,
+                entryDate: pendingOrder.executeDate,
+                entryPrice: executionPrice,
+                sharesPerLot: pendingOrder.sharesPerLot,
+              }))
+            );
+          } else if (pendingOrder.action === "close-short") {
+            shortPositions = shortPositions.slice(pendingOrder.lots);
+          } else {
+            longPositions = longPositions.slice(pendingOrder.lots);
+          }
+
+          newLogs.push({
+            id: createId("trade"),
+            action: pendingOrder.action,
+            lots: pendingOrder.lots,
+            orderedDate: pendingOrder.orderedDate,
+            executionDate: pendingOrder.executeDate,
+            executionPrice,
+            shares: pendingOrder.shares,
+            realizedProfit: executionRealizedProfit,
+          });
         }
-
-        const log: TradeLog = {
-          id: createId("trade"),
-          action: pendingOrder.action,
-          lots: pendingOrder.lots,
-          orderedDate: pendingOrder.orderedDate,
-          executionDate: pendingOrder.executeDate,
-          executionPrice: executionCandle.open,
-          shares: pendingOrder.shares,
-          realizedProfit: executionRealizedProfit,
-        };
 
         return {
           ...books,
@@ -1543,25 +1768,28 @@ export default function App() {
             shortPositions,
             longPositions,
             pendingOrder: null,
-            logs: [log, ...book.logs],
+            pendingOrders: book.pendingOrders.filter(
+              (order) => !dueOrders.some((dueOrder) => dueOrder.id === order.id)
+            ),
+            logs: [...newLogs.reverse(), ...book.logs],
           },
         };
       });
 
+      const firstOrder = dueOrders[0];
+      const firstCandle = candleByDate.get(firstOrder.executeDate);
       setOrderMessage(
-        `${formatDateWithWeekday(pendingOrder.executeDate)}の始値 ${formatCurrencyAmount(
-          executionCandle.open,
-          selectedInstrument.currency,
-          false
-        )}で約定しました${
-          executionRealizedProfit === null
-            ? ""
-            : `（確定損益 ${formatCurrencyAmount(
-                executionRealizedProfit,
-                selectedInstrument.currency
-              )}）`
-        }`
+        firstCandle
+          ? `${formatDateWithWeekday(firstOrder.executeDate)}の${getExecutionTimingPriceLabel(
+              firstOrder.executionTiming
+            )} ${formatCurrencyAmount(
+              getExecutionPrice(firstCandle, firstOrder.executionTiming),
+              selectedInstrument.currency,
+              false
+            )}で${dueOrders.length}件約定しました`
+          : `${dueOrders.length}件約定しました`
       );
+      playEffect("trade");
     };
 
     return () => {
@@ -1569,8 +1797,9 @@ export default function App() {
     };
   }, [
     currentBook.longPositions,
-    currentBook.pendingOrder,
+    currentBook.pendingOrders,
     currentBook.shortPositions,
+    playEffect,
     selectedDataPath,
     selectedInstrument.currency,
     selectedInstrument.multiplier,
@@ -2114,18 +2343,39 @@ export default function App() {
     selectedInstrument.multiplier === 1
       ? ""
       : ` / multiplier ${selectedInstrument.multiplier}`;
+  const pendingOrders = currentBook.pendingOrders;
+  const pendingCloseShortLots = pendingOrders
+    .filter((order) => order.action === "close-short")
+    .reduce((total, order) => total + order.lots, 0);
+  const pendingCloseLongLots = pendingOrders
+    .filter((order) => order.action === "close-long")
+    .reduce((total, order) => total + order.lots, 0);
+  const pendingAddShortLots = pendingOrders
+    .filter((order) => order.action === "add-short")
+    .reduce((total, order) => total + order.lots, 0);
+  const pendingAddLongLots = pendingOrders
+    .filter((order) => order.action === "add-long")
+    .reduce((total, order) => total + order.lots, 0);
+  const projectedBaseShortLots = Math.max(
+    0,
+    currentShortLots + pendingAddShortLots - pendingCloseShortLots
+  );
+  const projectedBaseLongLots = Math.max(
+    0,
+    currentLongLots + pendingAddLongLots - pendingCloseLongLots
+  );
   const projectedShortLots =
     orderAction === "add-short"
-      ? currentShortLots + orderLots
+      ? projectedBaseShortLots + orderLots
       : orderAction === "close-short"
-        ? Math.max(0, currentShortLots - orderLots)
-        : currentShortLots;
+        ? Math.max(0, projectedBaseShortLots - orderLots)
+        : projectedBaseShortLots;
   const projectedLongLots =
     orderAction === "add-long"
-      ? currentLongLots + orderLots
+      ? projectedBaseLongLots + orderLots
       : orderAction === "close-long"
-        ? Math.max(0, currentLongLots - orderLots)
-        : currentLongLots;
+        ? Math.max(0, projectedBaseLongLots - orderLots)
+        : projectedBaseLongLots;
   const orderActionLabel: Record<OrderAction, string> = {
     "add-short": "売りを追加",
     "close-short": "売りを返済",
@@ -2144,25 +2394,16 @@ export default function App() {
     "add-long": `買いを${orderLots}玉追加する`,
     "close-long": `買いを${orderLots}玉返済する`,
   };
-  const netLots = currentLongLots - currentShortLots;
-  const netPositionLabel =
-    netLots === 0
-      ? "実質: 建玉なし"
-      : netLots > 0
-        ? `実質: 買い${netLots}玉`
-        : `実質: 売り${Math.abs(netLots)}玉`;
-  const pendingOrder = currentBook.pendingOrder;
   const closeOrderAvailable =
     orderAction === "close-short"
-      ? currentShortLots
+      ? Math.max(0, currentShortLots - pendingCloseShortLots)
       : orderAction === "close-long"
-        ? currentLongLots
+        ? Math.max(0, currentLongLots - pendingCloseLongLots)
         : Number.POSITIVE_INFINITY;
   const isOrderQuantityValid = orderLots <= closeOrderAvailable;
   const canPlaceOrder =
     Boolean(dateInputValue) &&
     selectedDailyCandles.length > 0 &&
-    !pendingOrder &&
     isOrderQuantityValid;
   const profitClassName = (value: number) =>
     value > 0
@@ -2172,9 +2413,10 @@ export default function App() {
         : "profit-neutral";
 
   const placeOrder = () => {
-    if (!dateInputValue || pendingOrder) return;
+    if (!dateInputValue) return;
 
     if (!isOrderQuantityValid) {
+      playEffect("error");
       setOrderMessage("保有している玉数を超えて返済することはできません");
       return;
     }
@@ -2182,18 +2424,33 @@ export default function App() {
     const currentIndex = selectedDailyCandles.findIndex(
       (candle) => candle.time === dateInputValue
     );
+    const currentCandle = selectedDailyCandles[currentIndex];
     const nextCandle = selectedDailyCandles[currentIndex + 1];
+    const executionTiming = tradingSettings.executionTiming;
+    const executionCandle =
+      executionTiming === "same-close" ? currentCandle : nextCandle;
 
-    if (currentIndex < 0 || !nextCandle) {
-      setOrderMessage("次の取引日がないため注文できません");
+    if (currentIndex < 0 || !executionCandle) {
+      playEffect("error");
+      setOrderMessage(
+        executionTiming === "same-close"
+          ? "対象日の終値がないため注文できません"
+          : "次の取引日がないため注文できません"
+      );
       return;
     }
 
     const closingPositions =
       orderAction === "close-short"
-        ? currentBook.shortPositions.slice(0, orderLots)
+        ? currentBook.shortPositions.slice(
+            pendingCloseShortLots,
+            pendingCloseShortLots + orderLots
+          )
         : orderAction === "close-long"
-          ? currentBook.longPositions.slice(0, orderLots)
+          ? currentBook.longPositions.slice(
+              pendingCloseLongLots,
+              pendingCloseLongLots + orderLots
+            )
           : [];
     const orderShares =
       closingPositions.length > 0
@@ -2209,7 +2466,8 @@ export default function App() {
       shares: orderShares,
       sharesPerLot,
       orderedDate: dateInputValue,
-      executeDate: nextCandle.time,
+      executeDate: executionCandle.time,
+      executionTiming,
     };
 
     setTradingBooks((books) => {
@@ -2218,16 +2476,24 @@ export default function App() {
         ...books,
         [selectedDataPath]: {
           ...book,
-          pendingOrder: newOrder,
+          pendingOrder: null,
+          pendingOrders: [...book.pendingOrders, newOrder],
         },
       };
     });
     setOrderMessage(
-      `${formatDateWithWeekday(nextCandle.time)}の始値で約定予定です`
+      `${formatDateWithWeekday(executionCandle.time)}の${getExecutionTimingPriceLabel(
+        executionTiming
+      )}で約定予定です`
     );
+    if (executionTiming === "same-close") {
+      window.setTimeout(() => {
+        processPendingOrderRef.current?.(dateInputValue, selectedDailyCandles);
+      }, 0);
+    }
   };
 
-  const cancelPendingOrder = () => {
+  const cancelPendingOrder = (orderId: string) => {
     setTradingBooks((books) => {
       const book = books[selectedDataPath] ?? createEmptyTradingBook();
       return {
@@ -2235,6 +2501,9 @@ export default function App() {
         [selectedDataPath]: {
           ...book,
           pendingOrder: null,
+          pendingOrders: book.pendingOrders.filter(
+            (order) => order.id !== orderId
+          ),
         },
       };
     });
@@ -2284,11 +2553,13 @@ export default function App() {
 
     downloadTextFile(fileName, `\uFEFF${csvText}`, "text/csv;charset=utf-8");
     setOrderMessage("売買ログをCSV出力しました");
+    playEffect("success");
   };
 
   const resetDisplayedSettings = () => {
     setMaDisplaySettings(DEFAULT_MA_DISPLAY_SETTINGS);
     setAppearanceSettings(DEFAULT_CHART_APPEARANCE_DRAFT);
+    setTradingSettings(DEFAULT_TRADING_SETTINGS_DRAFT);
   };
 
   const updateMaDisplaySetting = (
@@ -2447,6 +2718,7 @@ export default function App() {
   const captureChartForPaint = async () => {
     const chart = chartApiRef.current;
     if (!chart) {
+      playEffect("error");
       setPaintStatusMessage("チャートを取得できませんでした");
       return;
     }
@@ -2487,8 +2759,10 @@ export default function App() {
       preserveVisibleRangeTransitionRef.current = false;
     }, 600);
     setPaintStatusMessage("現在のチャートを取り込みました");
+    playEffect("camera");
     } catch (error) {
       console.error(error);
+      playEffect("error");
       setPaintStatusMessage("チャート画像の取得に失敗しました。もう一度お試しください");
     } finally {
       setIsPaintCapturing(false);
@@ -2720,6 +2994,7 @@ export default function App() {
     link.download = `${stock.code}_${stock.name}_${dateInputValue || "chart"}_paint.png`;
     link.click();
     setPaintStatusMessage("PNGをダウンロードしました");
+    playEffect("success");
   };
 
   const saveCurrentPaintPractice = async () => {
@@ -2740,9 +3015,11 @@ export default function App() {
     try {
       await savePaintPracticeToDatabase(item);
       setPaintStatusMessage("ペイント結果を保存しました");
+      playEffect("success");
       setPaintSavedItems(await loadPaintPracticesFromDatabase());
     } catch (error) {
       console.error(error);
+      playEffect("error");
       setPaintStatusMessage("ペイント結果の保存に失敗しました");
     }
   };
@@ -2897,6 +3174,7 @@ export default function App() {
         isPaintCanvasActive ? "paint-canvas-active" : ""
       } ${isPaintCapturing ? "paint-capture-preparing" : ""}`}
       style={{
+        ...getAppThemeStyle(appearanceSettings.theme),
         backgroundColor: getAppBackgroundColor(appearanceSettings.theme),
         height: "100dvh",
         padding: "4px 8px",
@@ -2966,9 +3244,9 @@ export default function App() {
               event.currentTarget.blur();
             }}
             style={{
-              backgroundColor: "#1f2937",
-              border: "1px solid #475569",
-              color: "#f8fafc",
+              backgroundColor: "var(--panel-muted)",
+              border: "1px solid var(--border-strong)",
+              color: "var(--text)",
               padding: "5px 8px",
               borderRadius: "6px",
               fontSize: "14px",
@@ -3024,7 +3302,7 @@ export default function App() {
             display: "inline-flex",
             alignItems: "center",
             gap: "6px",
-            color: "#cbd5e1",
+            color: "var(--text)",
             fontSize: "14px",
           }}
         >
@@ -3049,9 +3327,9 @@ export default function App() {
               }
             }}
             style={{
-              backgroundColor: "#1f2937",
-              border: "1px solid #475569",
-              color: "#f8fafc",
+              backgroundColor: "var(--panel-muted)",
+              border: "1px solid var(--border-strong)",
+              color: "var(--text)",
               padding: "5px 8px",
               borderRadius: "6px",
               fontSize: "14px",
@@ -3076,11 +3354,13 @@ export default function App() {
             display: "inline-flex",
             alignItems: "center",
             gap: "6px",
-            backgroundColor: isFullscreen ? "#1d4ed8" : "#1f2937",
+            backgroundColor: isFullscreen
+              ? "var(--control-active-bg)"
+              : "var(--panel-muted)",
             border: isFullscreen
-              ? "1px solid #60a5fa"
-              : "1px solid #475569",
-            color: "#f8fafc",
+              ? "1px solid var(--blue)"
+              : "1px solid var(--border-strong)",
+            color: isFullscreen ? "#fff" : "var(--text)",
             padding: "5px 12px",
             borderRadius: "6px",
             cursor: "pointer",
@@ -3094,6 +3374,33 @@ export default function App() {
 
         <button
           type="button"
+          onClick={() => setSoundEnabled((enabled) => !enabled)}
+          title="効果音のオン・オフを切り替えます"
+          aria-label="効果音のオン・オフ"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            backgroundColor: soundEnabled
+              ? "var(--panel-muted)"
+              : "var(--control-bg)",
+            border: soundEnabled
+              ? "1px solid var(--border-strong)"
+              : "1px solid var(--border)",
+            color: soundEnabled ? "var(--text)" : "var(--muted)",
+            padding: "5px 10px",
+            borderRadius: "6px",
+            cursor: "pointer",
+            fontSize: "14px",
+            fontWeight: 700,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {soundEnabled ? "🔊 音あり" : "🔇 ミュート"}
+        </button>
+
+        <button
+          type="button"
           onClick={() => {
             setSettingsTab("appearance");
             setIsAppearanceSettingsOpen(true);
@@ -3102,11 +3409,13 @@ export default function App() {
             display: "inline-flex",
             alignItems: "center",
             gap: "6px",
-            backgroundColor: isAppearanceSettingsOpen ? "#1d4ed8" : "#1f2937",
+            backgroundColor: isAppearanceSettingsOpen
+              ? "var(--control-active-bg)"
+              : "var(--panel-muted)",
             border: isAppearanceSettingsOpen
-              ? "1px solid #60a5fa"
-              : "1px solid #475569",
-            color: "#f8fafc",
+              ? "1px solid var(--blue)"
+              : "1px solid var(--border-strong)",
+            color: isAppearanceSettingsOpen ? "#fff" : "var(--text)",
             padding: "5px 12px",
             borderRadius: "6px",
             cursor: "pointer",
@@ -3115,7 +3424,7 @@ export default function App() {
             whiteSpace: "nowrap",
           }}
         >
-          ⚙ 外観設定
+          ⚙ 設定
         </button>
 
         </div>
@@ -3138,9 +3447,9 @@ export default function App() {
           onClick={() => navigateRef.current?.(-1)}
           aria-label="1本戻る"
           style={{
-            backgroundColor: "#1f2937",
-            border: "1px solid #475569",
-            color: "#f8fafc",
+            backgroundColor: "var(--panel-muted)",
+            border: "1px solid var(--border-strong)",
+            color: "var(--text)",
             padding: "5px 12px",
             borderRadius: "6px",
             cursor: "pointer",
@@ -3164,10 +3473,10 @@ export default function App() {
             style={{
               minWidth: "210px",
               padding: "5px 12px",
-              border: "1px solid #475569",
+              border: "1px solid var(--border-strong)",
               borderRadius: "6px",
-              backgroundColor: "#111827",
-              color: "#f8fafc",
+              backgroundColor: "var(--panel-muted)",
+              color: "var(--text)",
               fontSize: "14px",
               cursor: "pointer",
             }}
@@ -3344,9 +3653,9 @@ export default function App() {
               : "最新データのため、これ以上進めません"
           }
           style={{
-            backgroundColor: "#1f2937",
-            border: "1px solid #475569",
-            color: "#f8fafc",
+            backgroundColor: "var(--panel-muted)",
+            border: "1px solid var(--border-strong)",
+            color: "var(--text)",
             padding: "5px 12px",
             borderRadius: "6px",
             cursor: canNavigateForward ? "pointer" : "not-allowed",
@@ -3381,10 +3690,10 @@ export default function App() {
             alignItems: "center",
             gap: "10px",
             padding: "5px 12px",
-            border: "1px solid #475569",
+            border: "1px solid var(--border-strong)",
             borderRadius: "6px",
-            backgroundColor: "#111827",
-            color: "#f8fafc",
+            backgroundColor: "var(--panel-muted)",
+            color: "var(--text)",
             fontSize: "14px",
             whiteSpace: "nowrap",
           }}
@@ -3904,11 +4213,6 @@ export default function App() {
               <strong>{currentLongLots}</strong>
             </div>
           </div>
-
-          <div className="position-caption">
-            <span>売玉 - 買玉</span>
-            <strong>{netPositionLabel}</strong>
-          </div>
         </section>
 
         <section className="trade-section profit-section">
@@ -3984,7 +4288,6 @@ export default function App() {
                   setOrderAction(action);
                   setOrderMessage("");
                 }}
-                disabled={Boolean(pendingOrder)}
               >
                 <strong>{orderActionLabel[action]}</strong>
                 <span>{orderActionSubLabel[action]}</span>
@@ -4002,7 +4305,6 @@ export default function App() {
                 type="button"
                 onClick={() => setOrderLots((value) => Math.max(1, value - 1))}
                 aria-label="注文玉数を減らす"
-                disabled={Boolean(pendingOrder)}
               >
                 -
               </button>
@@ -4011,7 +4313,6 @@ export default function App() {
                 type="button"
                 onClick={() => setOrderLots((value) => Math.min(99, value + 1))}
                 aria-label="注文玉数を増やす"
-                disabled={Boolean(pendingOrder)}
               >
                 +
               </button>
@@ -4029,7 +4330,6 @@ export default function App() {
                   max="100000"
                   step="1"
                   value={sharesPerLot}
-                  disabled={Boolean(pendingOrder)}
                   aria-label="1玉あたり数量"
                   onChange={(event) => {
                     const nextValue = Number(event.target.value);
@@ -4052,52 +4352,52 @@ export default function App() {
 
           <div className="execution-row">
             <span>約定タイミング</span>
-            <strong>次の取引日の始値</strong>
+            <strong>
+              {tradingSettings.executionTiming === "same-close"
+                ? "当日の終値"
+                : "次の取引日の始値"}
+            </strong>
           </div>
 
-          {pendingOrder ? (
+          {pendingOrders.length > 0 && (
             <div className="pending-order">
-              <div>
-                <span>注文待機中</span>
-                <strong>
-                  {orderActionLabel[pendingOrder.action]}・
-                  {pendingOrder.lots}玉（
-                  {formatQuantity(
-                    pendingOrder.shares,
-                    selectedInstrument.unitLabel
-                  )}
-                  ）
-                </strong>
-              </div>
-              <div>
-                <span>約定予定日</span>
-                <strong>{formatDateWithWeekday(pendingOrder.executeDate)}</strong>
-              </div>
-              <button type="button" onClick={cancelPendingOrder}>
-                注文を取り消す
-              </button>
+              <span>注文待機中 {pendingOrders.length}件</span>
+              {pendingOrders.map((order) => (
+                <div className="pending-order-row" key={order.id}>
+                  <strong>
+                    {orderActionLabel[order.action]}・{order.lots}玉（
+                    {formatQuantity(order.shares, selectedInstrument.unitLabel)}
+                    ）
+                  </strong>
+                  <span>{formatDateWithWeekday(order.executeDate)}</span>
+                  <button
+                    type="button"
+                    onClick={() => cancelPendingOrder(order.id)}
+                  >
+                    取消
+                  </button>
+                </div>
+              ))}
             </div>
-          ) : (
-            <>
-              <div className="order-preview">
-                <span>注文後の建玉</span>
-                <strong>
-                  {projectedShortLots} - {projectedLongLots}
-                </strong>
-              </div>
-
-              <button
-                type="button"
-                className="submit-order-button"
-                onClick={placeOrder}
-                disabled={!canPlaceOrder}
-              >
-                {isOrderQuantityValid
-                  ? orderSubmitLabel[orderAction]
-                  : `返済可能は${closeOrderAvailable}玉まで`}
-              </button>
-            </>
           )}
+
+          <div className="order-preview">
+            <span>注文後の建玉</span>
+            <strong>
+              {projectedShortLots} - {projectedLongLots}
+            </strong>
+          </div>
+
+          <button
+            type="button"
+            className="submit-order-button"
+            onClick={placeOrder}
+            disabled={!canPlaceOrder}
+          >
+            {isOrderQuantityValid
+              ? orderSubmitLabel[orderAction]
+              : `返済可能は${closeOrderAvailable}玉まで`}
+          </button>
 
           {orderMessage && <div className="order-message">{orderMessage}</div>}
         </section>
@@ -4113,14 +4413,14 @@ export default function App() {
               display: "flex",
               flexDirection: "column",
               gap: "8px",
-              color: "#cbd5e1",
+              color: "var(--text)",
               fontSize: "13px",
             }}
           >
             <p
               style={{
                 margin: 0,
-                color: "#94a3b8",
+                color: "var(--muted)",
                 fontSize: "11px",
                 lineHeight: 1.45,
               }}
@@ -4130,17 +4430,17 @@ export default function App() {
             <div
               style={{
                 padding: "8px",
-                border: "1px solid #334155",
+                border: "1px solid var(--border)",
                 borderRadius: "8px",
-                backgroundColor: "#0f172a",
+                backgroundColor: "var(--panel-muted)",
               }}
             >
-              <span style={{ color: "#94a3b8" }}>対象日</span>
+              <span style={{ color: "var(--muted)" }}>対象日</span>
               <strong
                 style={{
                   display: "block",
                   marginTop: "3px",
-                  color: "#f8fafc",
+                  color: "var(--text)",
                 }}
               >
                 {paintTargetDate
@@ -4366,7 +4666,7 @@ export default function App() {
               }}
             >
               <div>
-                <h2 style={{ margin: 0, fontSize: "20px" }}>外観設定</h2>
+                <h2 style={{ margin: 0, fontSize: "20px" }}>設定</h2>
                 <p
                   style={{
                     margin: "6px 0 0",
@@ -4383,6 +4683,7 @@ export default function App() {
                   const savedSettings = loadChartSettingsFromStorage();
                   setMaDisplaySettings(savedSettings.maSettings);
                   setAppearanceSettings(savedSettings.appearanceSettings);
+                  setTradingSettings(savedSettings.tradingSettings);
                   setIsAppearanceSettingsOpen(false);
                 }}
                 aria-label="外観設定を閉じる"
@@ -4405,7 +4706,7 @@ export default function App() {
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
+                  gridTemplateColumns: "1fr 1fr 1fr",
                   gap: "8px",
                   marginBottom: "16px",
                 }}
@@ -4414,6 +4715,7 @@ export default function App() {
                   [
                     { value: "ma", label: "移動平均線" },
                     { value: "appearance", label: "チャート外観" },
+                    { value: "trading", label: "売買設定" },
                   ] as Array<{ value: SettingsTab; label: string }>
                 ).map((tab) => {
                   const isActive = settingsTab === tab.value;
@@ -4758,6 +5060,101 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+              ) : settingsTab === "trading" ? (
+                <div
+                  style={{
+                    border: "1px solid #334155",
+                    borderRadius: "8px",
+                    overflow: "hidden",
+                    backgroundColor: "rgba(15, 23, 42, 0.72)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "180px 1fr",
+                      alignItems: "start",
+                      gap: "12px",
+                      padding: "14px",
+                      borderBottom: "1px solid #334155",
+                    }}
+                  >
+                    <strong>約定タイミング</strong>
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: "8px",
+                      }}
+                    >
+                      {(
+                        [
+                          {
+                            value: "next-open",
+                            label: "次の取引日の始値",
+                            description:
+                              "今まで通りの動きです。注文した次の取引日の始値で約定します。",
+                          },
+                          {
+                            value: "same-close",
+                            label: "当日の終値",
+                            description:
+                              "表示中の日付の終値で約定します。終値ベースで素早く検証したい時に使います。",
+                          },
+                        ] as Array<{
+                          value: ExecutionTiming;
+                          label: string;
+                          description: string;
+                        }>
+                      ).map((option) => {
+                        const isActive =
+                          tradingSettings.executionTiming === option.value;
+
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() =>
+                              setTradingSettings((settings) => ({
+                                ...settings,
+                                executionTiming: option.value,
+                              }))
+                            }
+                            style={{
+                              display: "grid",
+                              gap: "4px",
+                              border: isActive
+                                ? "1px solid #60a5fa"
+                                : "1px solid #475569",
+                              borderRadius: "7px",
+                              backgroundColor: isActive ? "#1d4ed8" : "#111827",
+                              color: "#f8fafc",
+                              padding: "10px 12px",
+                              cursor: "pointer",
+                              textAlign: "left",
+                            }}
+                          >
+                            <span style={{ fontWeight: 700 }}>
+                              {option.label}
+                            </span>
+                            <span style={{ color: "#cbd5e1", fontSize: "12px" }}>
+                              {option.description}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      padding: "12px 14px",
+                      color: "#94a3b8",
+                      fontSize: "12px",
+                      lineHeight: 1.7,
+                    }}
+                  >
+                    変更後に入れる注文から反映されます。すでに注文済みの約定予定は、注文時の設定で処理されます。
+                  </div>
+                </div>
               ) : (
                 <div
                   style={{
@@ -5050,6 +5447,7 @@ export default function App() {
                     const savedSettings = loadChartSettingsFromStorage();
                     setMaDisplaySettings(savedSettings.maSettings);
                     setAppearanceSettings(savedSettings.appearanceSettings);
+                    setTradingSettings(savedSettings.tradingSettings);
                     setIsAppearanceSettingsOpen(false);
                   }}
                   style={{
@@ -5070,6 +5468,7 @@ export default function App() {
                     saveChartSettingsToStorage({
                       maSettings: maDisplaySettings,
                       appearanceSettings,
+                      tradingSettings,
                     });
                     setIsAppearanceSettingsOpen(false);
                   }}
