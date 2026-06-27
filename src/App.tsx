@@ -515,6 +515,17 @@ function formatQuantity(value: number, unitLabel: string) {
   return `${value.toLocaleString("ja-JP")}${unitLabel}`;
 }
 
+function formatPrice(value: number, decimals: number) {
+  return value.toLocaleString("ja-JP", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function getMinMove(decimals: number) {
+  return decimals <= 0 ? 1 : 1 / 10 ** decimals;
+}
+
 function drawPaintObject(
   context: CanvasRenderingContext2D,
   object: PaintDrawingObject
@@ -1617,6 +1628,11 @@ export default function App() {
       wickDownColor: appearanceSettings.bearishColor,
       priceLineVisible: false,
       lastValueVisible: false,
+      priceFormat: {
+        type: "price",
+        precision: selectedInstrument.priceDecimals,
+        minMove: getMinMove(selectedInstrument.priceDecimals),
+      },
     });
 
     const paintMarkerApi = createSeriesMarkers(candleSeries, []);
@@ -2060,6 +2076,7 @@ export default function App() {
     appearanceSettings,
     currentPaintMarks,
     rememberVisibleLogicalRange,
+    selectedInstrument.priceDecimals,
   ]);
 
   const currentShortLots = currentBook.shortPositions.length;
@@ -3372,10 +3389,30 @@ export default function App() {
             whiteSpace: "nowrap",
           }}
         >
-          <span>始値: {currentOhlc?.open ?? "-"}</span>
-          <span>高値: {currentOhlc?.high ?? "-"}</span>
-          <span>安値: {currentOhlc?.low ?? "-"}</span>
-          <span>終値: {currentOhlc?.close ?? "-"}</span>
+          <span>
+            始値:{" "}
+            {currentOhlc
+              ? formatPrice(currentOhlc.open, selectedInstrument.priceDecimals)
+              : "-"}
+          </span>
+          <span>
+            高値:{" "}
+            {currentOhlc
+              ? formatPrice(currentOhlc.high, selectedInstrument.priceDecimals)
+              : "-"}
+          </span>
+          <span>
+            安値:{" "}
+            {currentOhlc
+              ? formatPrice(currentOhlc.low, selectedInstrument.priceDecimals)
+              : "-"}
+          </span>
+          <span>
+            終値:{" "}
+            {currentOhlc
+              ? formatPrice(currentOhlc.close, selectedInstrument.priceDecimals)
+              : "-"}
+          </span>
         </div>
         </div>
       </header>
