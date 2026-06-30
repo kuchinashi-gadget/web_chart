@@ -37,6 +37,7 @@ type VisibleLogicalRange = { from: number; to: number };
 type DisplayBarsOption = "auto" | "50" | "75" | "100" | "150" | "200";
 type SettingsTab = "ma" | "appearance" | "trading";
 type ExecutionTiming = "next-open" | "same-close";
+type AppLanguage = "ja" | "en";
 type ChartTheme = "dark" | "dark-blue" | "black" | "light" | "light-gray" | "ivory";
 type SettingSize = "small" | "medium" | "large";
 type MaLineStyleOption =
@@ -139,6 +140,7 @@ type CsvCandleRow = {
 };
 
 type DisplayCandle = Candle & {
+  sourceStartTime: string;
   sourceEndTime: string;
 };
 
@@ -175,6 +177,9 @@ type TradeLog = {
   executionDate: string;
   executionPrice: number;
   realizedProfit: number | null;
+  positionIds?: string[];
+  closesPositionIds?: string[];
+  closedPositions?: PositionLot[];
 };
 
 type TradingBook = {
@@ -286,6 +291,19 @@ function normalizeTradeLog(value: unknown): TradeLog | null {
     executionDate: item.executionDate,
     executionPrice: item.executionPrice,
     realizedProfit: item.realizedProfit,
+    positionIds: Array.isArray(item.positionIds)
+      ? item.positionIds.filter((id): id is string => typeof id === "string")
+      : undefined,
+    closesPositionIds: Array.isArray(item.closesPositionIds)
+      ? item.closesPositionIds.filter(
+          (id): id is string => typeof id === "string"
+        )
+      : undefined,
+    closedPositions: Array.isArray(item.closedPositions)
+      ? item.closedPositions
+          .map(normalizePositionLot)
+          .filter((position): position is PositionLot => position !== null)
+      : undefined,
   };
 }
 
@@ -764,35 +782,45 @@ const chartColorPresets = [
   {
     id: "tradingview",
     label: "緑 / 赤",
+    labelEn: "Green / Red",
     description: "一般的な海外チャート風",
+    descriptionEn: "Common global chart style",
     bullishColor: "#22c55e",
     bearishColor: "#ef4444",
   },
   {
     id: "japanese-red-blue",
     label: "赤 / 青",
+    labelEn: "Red / Blue",
     description: "日本株チャート風",
+    descriptionEn: "Japanese stock chart style",
     bullishColor: "#ef4444",
     bearishColor: "#2563eb",
   },
   {
     id: "red-green",
     label: "赤 / 緑",
+    labelEn: "Red / Green",
     description: "国内ツールで見かける配色",
+    descriptionEn: "Often used in Japanese tools",
     bullishColor: "#ef4444",
     bearishColor: "#16a34a",
   },
   {
     id: "blue-red",
     label: "青 / 赤",
+    labelEn: "Blue / Red",
     description: "寒色系の上昇色",
+    descriptionEn: "Cool color for rising candles",
     bullishColor: "#2563eb",
     bearishColor: "#ef4444",
   },
   {
     id: "black-gray",
     label: "黒 / グレー",
+    labelEn: "Black / Gray",
     description: "白背景向けモノクロ風",
+    descriptionEn: "Monochrome style for light themes",
     bullishColor: "#111827",
     bearishColor: "#9ca3af",
   },
@@ -871,7 +899,12 @@ type StoredChartSettings = {
   maSettings: MaDisplaySetting[];
   appearanceSettings: ChartAppearanceDraft;
   tradingSettings: TradingSettingsDraft;
+  language: AppLanguage;
 };
+
+function normalizeLanguage(value: unknown): AppLanguage {
+  return value === "en" ? "en" : "ja";
+}
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number) {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
@@ -976,6 +1009,7 @@ function loadChartSettingsFromStorage(): StoredChartSettings {
       maSettings: DEFAULT_MA_DISPLAY_SETTINGS,
       appearanceSettings: DEFAULT_CHART_APPEARANCE_DRAFT,
       tradingSettings: DEFAULT_TRADING_SETTINGS_DRAFT,
+      language: "ja",
     };
   }
 
@@ -986,6 +1020,7 @@ function loadChartSettingsFromStorage(): StoredChartSettings {
         maSettings: DEFAULT_MA_DISPLAY_SETTINGS,
         appearanceSettings: DEFAULT_CHART_APPEARANCE_DRAFT,
         tradingSettings: DEFAULT_TRADING_SETTINGS_DRAFT,
+        language: "ja",
       };
     }
 
@@ -1002,6 +1037,7 @@ function loadChartSettingsFromStorage(): StoredChartSettings {
         parsed.appearanceSettings
       ),
       tradingSettings: normalizeTradingSettingsDraft(parsed.tradingSettings),
+      language: normalizeLanguage(parsed.language),
     };
   } catch (error) {
     console.warn("Failed to load chart settings", error);
@@ -1010,6 +1046,7 @@ function loadChartSettingsFromStorage(): StoredChartSettings {
       maSettings: DEFAULT_MA_DISPLAY_SETTINGS,
       appearanceSettings: DEFAULT_CHART_APPEARANCE_DRAFT,
       tradingSettings: DEFAULT_TRADING_SETTINGS_DRAFT,
+      language: "ja",
     };
   }
 }
@@ -1237,12 +1274,6 @@ function LineStylePreview({
   );
 }
 
-const timeframeLabels: Record<Timeframe, string> = {
-  daily: "日足",
-  weekly: "週足",
-  monthly: "月足",
-};
-
 const displayBarsOptions: Array<{ value: DisplayBarsOption; label: string }> = [
   { value: "auto", label: "自動" },
   { value: "50", label: "50本" },
@@ -1336,6 +1367,7 @@ function aggregateCandles(
   if (timeframe === "daily") {
     return candles.map((candle) => ({
       ...candle,
+      sourceStartTime: candle.time,
       sourceEndTime: candle.time,
     }));
   }
@@ -1350,7 +1382,11 @@ function aggregateCandles(
     const current = grouped.get(key);
 
     if (!current) {
-      grouped.set(key, { ...candle, sourceEndTime: candle.time });
+      grouped.set(key, {
+        ...candle,
+        sourceStartTime: candle.time,
+        sourceEndTime: candle.time,
+      });
       return;
     }
 
@@ -1450,6 +1486,10 @@ export default function App() {
   const processedOrderIdsRef = useRef(new Set<string>());
   const dailyCandlesCacheRef = useRef(new Map<string, Candle[]>());
   const anchorDailyDateRef = useRef<string | null>(null);
+  const returnDailyDateRef = useRef<string | null>(null);
+  const upperTimeframeMovedRef = useRef(false);
+  const ignoreNextRangeSyncRef = useRef(false);
+  const timeframeSwitchSyncRef = useRef(false);
   const visibleLogicalRangeRef = useRef<VisibleLogicalRange | null>(null);
   const paintPracticeChartRangeRef = useRef<VisibleLogicalRange | null>(null);
   const preserveVisibleRangeTransitionRef = useRef(false);
@@ -1515,7 +1555,9 @@ export default function App() {
     Record<string, TradingBook>
   >(() => loadTradingBooksFromStorage());
   const [orderMessage, setOrderMessage] = useState("");
+  const [orderMessageExpiresOn, setOrderMessageExpiresOn] = useState("");
   const [isTradeLogOpen, setIsTradeLogOpen] = useState(false);
+  const [activeTradeLogId, setActiveTradeLogId] = useState("");
   const [paintMarksByStock, setPaintMarksByStock] = useState<
     Record<string, PaintMark[]>
   >(() => loadPaintMarksFromStorage());
@@ -1535,12 +1577,126 @@ export default function App() {
     useState<TradingSettingsDraft>(
       () => loadChartSettingsFromStorage().tradingSettings
     );
+  const [language, setLanguage] = useState<AppLanguage>(
+    () => loadChartSettingsFromStorage().language
+  );
+  const isEnglish = language === "en";
+  const ui = {
+    stock: isEnglish ? "Symbol" : "銘柄",
+    timeframe: isEnglish ? "Timeframe" : "足種",
+    display: isEnglish ? "Bars" : "表示",
+    visibleBars: isEnglish ? "Showing" : "表示中",
+    fullscreen: isEnglish ? "Fullscreen" : "全画面",
+    exitFullscreen: isEnglish ? "Exit Fullscreen" : "全画面解除",
+    soundOn: isEnglish ? "Sound On" : "音あり",
+    muted: isEnglish ? "Muted" : "ミュート",
+    settings: isEnglish ? "Settings" : "設定",
+    settingsDescription: isEnglish
+      ? "Changes are applied to the chart. Save to keep them for the next launch."
+      : "変更した設定はチャートへ反映されます。保存すると次回起動時も維持されます。",
+    language: isEnglish ? "Language" : "言語",
+    movingAverages: isEnglish ? "Moving Averages" : "移動平均線",
+    chartAppearance: isEnglish ? "Chart Appearance" : "チャート外観",
+    tradeSettings: isEnglish ? "Trading" : "売買設定",
+    tradePractice: isEnglish ? "Trade Practice" : "売買練習",
+    currentPosition: isEnglish ? "Current Position" : "現在の建玉",
+    shortLots: isEnglish ? "Short" : "売玉",
+    longLots: isEnglish ? "Long" : "買玉",
+    profit: isEnglish ? "Profit" : "損益",
+    show: isEnglish ? "Show" : "表示",
+    hide: isEnglish ? "Hide" : "非表示",
+    realizedProfit: isEnglish ? "Realized" : "確定損益",
+    unrealizedProfit: isEnglish ? "Unrealized" : "含み損益",
+    totalProfit: isEnglish ? "Total" : "総合損益",
+    order: isEnglish ? "Order" : "注文",
+    quantitySettings: isEnglish ? "Quantity Settings" : "数量設定",
+    orderLots: isEnglish ? "Order Lots" : "注文玉数",
+    quantityPerLot: isEnglish ? "Quantity per Lot" : "1玉あたり数量",
+    calculationUnit: isEnglish ? "Calculation Unit" : "計算単位",
+    pendingOrders: isEnglish ? "Pending Orders" : "注文待機中",
+    cancel: isEnglish ? "Cancel" : "取消",
+    chartMemo: isEnglish ? "Chart Memo" : "チャートメモ",
+    tradeLog: isEnglish ? "Trade Log" : "売買ログ",
+    exportCsv: isEnglish ? "Export CSV" : "CSV出力",
+    resetPractice: isEnglish ? "Reset Practice" : "練習をリセット",
+    backOneBar: isEnglish ? "Back 1" : "1本戻る",
+    forwardOneBar: isEnglish ? "Forward 1" : "1本進む",
+    currentDate: isEnglish ? "Current Date" : "現在日付",
+    loading: isEnglish ? "Loading" : "読み込み中",
+    selectCandle: isEnglish ? "Select Candlestick" : "ローソク足を選択",
+    selected: isEnglish ? "Selected" : "選択",
+    moveToRightEdge: isEnglish ? "Move to right edge" : "右端へ移動",
+    open: isEnglish ? "Open" : "始値",
+    high: isEnglish ? "High" : "高値",
+    low: isEnglish ? "Low" : "安値",
+    closePrice: isEnglish ? "Close" : "終値",
+    delete: isEnglish ? "Delete" : "削除",
+    orderedDate: isEnglish ? "Ordered" : "注文日",
+    executedDate: isEnglish ? "Executed" : "約定日",
+    executionPrice: isEnglish ? "Execution Price" : "約定価格",
+    related: isEnglish ? "related" : "対応",
+    paintPractice: isEnglish ? "Paint Practice" : "ペイント練習",
+    paintCanvas: isEnglish ? "Paint Canvas" : "ペイントキャンバス",
+    captureChart: isEnglish
+      ? "Capture current chart to start"
+      : "現在のチャートをスクショして開始",
+    replaceChartImage: isEnglish
+      ? "Replace with current chart image"
+      : "現在のチャート画像へ置き換え",
+    paintPracticeDescription: isEnglish
+      ? "Capture the current chart as an image, then draw lines and notes for review."
+      : "現在のチャートを画像として取り込み、線やメモを書き込んで振り返ります。",
+    captureHelp: isEnglish
+      ? "Adjust the date, position, and scale before capturing."
+      : "押す前に日付・表示位置・縮尺を調整できます。",
+    drawingTools: isEnglish ? "Drawing Tools" : "描画ツール",
+    color: isEnglish ? "Color" : "色",
+    lineWidth: isEnglish ? "Line Width" : "線の太さ",
+    undo: isEnglish ? "Undo" : "元に戻す",
+    redo: isEnglish ? "Redo" : "やり直し",
+    clearAll: isEnglish ? "Clear All" : "全消去",
+    downloadPng: isEnglish ? "Download PNG" : "PNGダウンロード",
+    savePaint: isEnglish ? "Save Paint" : "ペイントを保存",
+    viewHistory: isEnglish ? "View History" : "履歴を見る",
+    paintHistory: isEnglish ? "Paint History" : "ペイント履歴",
+    noSavedPaint: isEnglish
+      ? "No saved paint practices"
+      : "保存されたペイントはありません",
+    load: isEnglish ? "Load" : "読み込む",
+    addText: isEnglish ? "Add" : "追加",
+    targetDate: isEnglish ? "Target Date" : "対象日",
+    buyCandidate: isEnglish ? "Buy Candidate" : "買い候補",
+    sellCandidate: isEnglish ? "Sell Candidate" : "売り候補",
+    addMemo: isEnglish ? "Add Memo" : "メモ追加",
+    clearStockMemos: isEnglish
+      ? "Clear all memos for this symbol"
+      : "この銘柄のメモを全削除",
+    save: isEnglish ? "Save" : "保存",
+    close: isEnglish ? "Close" : "閉じる",
+    daily: isEnglish ? "D" : "日足",
+    weekly: isEnglish ? "W" : "週足",
+    monthly: isEnglish ? "M" : "月足",
+    autoBars: isEnglish ? "Auto" : "自動",
+    barsSuffix: isEnglish ? " bars" : "本",
+    nextOpen: isEnglish ? "Next trading day open" : "次の取引日の始値",
+    sameClose: isEnglish ? "Same day close" : "当日の終値",
+  };
+  const paintPracticeToolLabels: Record<PaintPracticeTool, string> = {
+    line: isEnglish ? "Line" : "直線",
+    curve: isEnglish ? "Curve" : "曲線",
+    freehand: isEnglish ? "Freehand" : "フリーハンド",
+    arrow: isEnglish ? "Arrow" : "矢印",
+    ellipse: isEnglish ? "Circle / Oval" : "丸・楕円",
+    rectangle: isEnglish ? "Rectangle" : "四角",
+    text: isEnglish ? "Text" : "テキスト",
+    eraser: isEnglish ? "Eraser" : "消しゴム",
+  };
   const displayBars =
     displayBarsOption === "auto" ? autoDisplayBars : Number(displayBarsOption);
   const currentBook =
     tradingBooks[selectedDataPath] ?? createEmptyTradingBook();
   const currentPaintMarks = paintMarksByStock[selectedDataPath] ?? EMPTY_PAINT_MARKS;
-  const paintTargetDate = dateInputValue;
+  const paintTargetDate = selectedChartDate || dateInputValue;
   const selectedDatePaintMarks = paintTargetDate
     ? currentPaintMarks.filter((mark) => mark.date === paintTargetDate)
     : [];
@@ -1549,6 +1705,47 @@ export default function App() {
   const playEffect = useCallback(
     (effect: SoundEffect) => playSoundEffect(effect, soundEnabled),
     [soundEnabled]
+  );
+  const showOrderMessage = useCallback((message: string, expiresOn = "") => {
+    setOrderMessage(message);
+    setOrderMessageExpiresOn(expiresOn);
+  }, []);
+
+  const displayedOrderMessage =
+    orderMessageExpiresOn && dateInputValue && dateInputValue > orderMessageExpiresOn
+      ? ""
+      : orderMessage;
+
+  const changeTimeframe = useCallback(
+    (nextTimeframe: Timeframe) => {
+      if (timeframe === nextTimeframe) return;
+
+      const currentAnchor = dateInputValue || anchorDailyDateRef.current || "";
+      if (timeframe === "daily") {
+        returnDailyDateRef.current = currentAnchor;
+        upperTimeframeMovedRef.current = false;
+      }
+
+      if (nextTimeframe === "daily") {
+        const nextAnchor = upperTimeframeMovedRef.current
+          ? anchorDailyDateRef.current
+          : returnDailyDateRef.current;
+
+        if (nextAnchor) {
+          anchorDailyDateRef.current = nextAnchor;
+        }
+        returnDailyDateRef.current = null;
+        upperTimeframeMovedRef.current = false;
+      }
+
+      timeframeSwitchSyncRef.current = true;
+      window.setTimeout(() => {
+        timeframeSwitchSyncRef.current = false;
+      }, 450);
+      setIsChartLoading(true);
+      setTimeframe(nextTimeframe);
+    },
+    [dateInputValue, timeframe]
   );
 
   const rememberVisibleLogicalRange = useCallback((range: VisibleLogicalRange | null) => {
@@ -1696,6 +1893,9 @@ export default function App() {
             executionCandle,
             pendingOrder.executionTiming
           );
+          let positionIds: string[] | undefined;
+          let closesPositionIds: string[] | undefined;
+          let closedPositions: PositionLot[] | undefined;
 
           const closingPositions =
             pendingOrder.action === "close-short"
@@ -1725,28 +1925,32 @@ export default function App() {
                 : null;
 
           if (pendingOrder.action === "add-short") {
-            shortPositions.push(
-              ...Array.from({ length: pendingOrder.lots }, () => ({
+            const createdPositions = Array.from({ length: pendingOrder.lots }, () => ({
                 id: createId("short"),
                 side: "short" as const,
                 entryDate: pendingOrder.executeDate,
                 entryPrice: executionPrice,
                 sharesPerLot: pendingOrder.sharesPerLot,
-              }))
-            );
+              }));
+            positionIds = createdPositions.map((position) => position.id);
+            shortPositions.push(...createdPositions);
           } else if (pendingOrder.action === "add-long") {
-            longPositions.push(
-              ...Array.from({ length: pendingOrder.lots }, () => ({
+            const createdPositions = Array.from({ length: pendingOrder.lots }, () => ({
                 id: createId("long"),
                 side: "long" as const,
                 entryDate: pendingOrder.executeDate,
                 entryPrice: executionPrice,
                 sharesPerLot: pendingOrder.sharesPerLot,
-              }))
-            );
+              }));
+            positionIds = createdPositions.map((position) => position.id);
+            longPositions.push(...createdPositions);
           } else if (pendingOrder.action === "close-short") {
+            closesPositionIds = closingPositions.map((position) => position.id);
+            closedPositions = closingPositions;
             shortPositions = shortPositions.slice(pendingOrder.lots);
           } else {
+            closesPositionIds = closingPositions.map((position) => position.id);
+            closedPositions = closingPositions;
             longPositions = longPositions.slice(pendingOrder.lots);
           }
 
@@ -1759,6 +1963,9 @@ export default function App() {
             executionPrice,
             shares: pendingOrder.shares,
             realizedProfit: executionRealizedProfit,
+            positionIds,
+            closesPositionIds,
+            closedPositions,
           });
         }
 
@@ -1778,7 +1985,7 @@ export default function App() {
 
       const firstOrder = dueOrders[0];
       const firstCandle = candleByDate.get(firstOrder.executeDate);
-      setOrderMessage(
+      showOrderMessage(
         firstCandle
           ? `${formatDateWithWeekday(firstOrder.executeDate)}の${getExecutionTimingPriceLabel(
               firstOrder.executionTiming
@@ -1787,7 +1994,8 @@ export default function App() {
               selectedInstrument.currency,
               false
             )}で${dueOrders.length}件約定しました`
-          : `${dueOrders.length}件約定しました`
+          : `${dueOrders.length}件約定しました`,
+        firstOrder.executeDate
       );
       playEffect("trade");
     };
@@ -1803,6 +2011,7 @@ export default function App() {
     selectedDataPath,
     selectedInstrument.currency,
     selectedInstrument.multiplier,
+    showOrderMessage,
   ]);
 
   useEffect(() => {
@@ -1965,12 +2174,27 @@ export default function App() {
           const availableCandles = allCandles.slice(0, endIndex);
           candleSeries.setData(availableCandles);
 
+          const displayDateByPaintDate = new Map<string, string>();
+          currentPaintMarks.forEach((mark) => {
+            const candleForMark = allCandles.find(
+              (candle) =>
+                mark.date >= candle.sourceStartTime &&
+                mark.date <= candle.sourceEndTime
+            );
+            if (candleForMark) {
+              displayDateByPaintDate.set(mark.date, candleForMark.time);
+            }
+          });
           const visibleTimes = new Set(availableCandles.map((candle) => candle.time));
           const visiblePaintMarkers: SeriesMarker<Time>[] = currentPaintMarks
-            .filter((mark) => visibleTimes.has(mark.date))
+            .map((mark) => ({
+              mark,
+              displayDate: displayDateByPaintDate.get(mark.date) ?? mark.date,
+            }))
+            .filter(({ displayDate }) => visibleTimes.has(displayDate))
             .map(
-              (mark): SeriesMarker<Time> => ({
-                time: mark.date,
+              ({ mark, displayDate }): SeriesMarker<Time> => ({
+                time: displayDate,
                 position: mark.type === "up" ? "belowBar" : "aboveBar",
                 color:
                   mark.type === "up"
@@ -2013,6 +2237,7 @@ export default function App() {
               : null;
           const visibleRangeToApply = preservedVisibleRange ?? nextVisibleRange;
           visibleLogicalRangeRef.current = visibleRangeToApply;
+          ignoreNextRangeSyncRef.current = true;
           chart.timeScale().setVisibleLogicalRange(visibleRangeToApply);
 
           const latest = allCandles[endIndex - 1];
@@ -2100,8 +2325,20 @@ export default function App() {
             return;
           }
 
+          const shouldIgnoreRangeSync = ignoreNextRangeSyncRef.current;
+          const isTimeframeSwitchSync = timeframeSwitchSyncRef.current;
+          ignoreNextRangeSyncRef.current = false;
+
           rememberVisibleLogicalRange(clampedRange);
           syncVisibleRightEdge(clampedRange);
+          if (
+            !shouldIgnoreRangeSync &&
+            !isTimeframeSwitchSync &&
+            timeframe !== "daily"
+          ) {
+            upperTimeframeMovedRef.current = true;
+            returnDailyDateRef.current = anchorDailyDateRef.current;
+          }
 
           const firstIndex = Math.max(0, Math.ceil(clampedRange.from));
           const lastIndex = Math.min(
@@ -2132,6 +2369,10 @@ export default function App() {
 
           endIndex = nextIndex;
           anchorDailyDateRef.current = allCandles[endIndex - 1]?.sourceEndTime;
+          if (timeframe !== "daily") {
+            upperTimeframeMovedRef.current = true;
+            returnDailyDateRef.current = anchorDailyDateRef.current;
+          }
           updateChart();
         };
 
@@ -2142,6 +2383,10 @@ export default function App() {
 
           setIsChartLoading(true);
           anchorDailyDateRef.current = dailyDate;
+          if (timeframe !== "daily") {
+            upperTimeframeMovedRef.current = true;
+            returnDailyDateRef.current = dailyDate;
+          }
           endIndex = findEndIndexByAnchor(allCandles, dailyDate, displayBars);
           updateChart();
         };
@@ -2351,16 +2596,16 @@ export default function App() {
     .filter((order) => order.action === "close-long")
     .reduce((total, order) => total + order.lots, 0);
   const orderActionLabel: Record<OrderAction, string> = {
-    "add-short": "売りを追加",
-    "close-short": "売りを返済",
-    "add-long": "買いを追加",
-    "close-long": "買いを返済",
+    "add-short": isEnglish ? "Add Short" : "売りを追加",
+    "close-short": isEnglish ? "Close Short" : "売りを返済",
+    "add-long": isEnglish ? "Add Long" : "買いを追加",
+    "close-long": isEnglish ? "Close Long" : "買いを返済",
   };
   const quickOrderLabel: Record<OrderAction, string> = {
-    "add-short": "売り +",
-    "close-short": "売り -",
-    "add-long": "買い +",
-    "close-long": "買い -",
+    "add-short": isEnglish ? "Short +" : "売り +",
+    "close-short": isEnglish ? "Short -" : "売り -",
+    "add-long": isEnglish ? "Long +" : "買い +",
+    "close-long": isEnglish ? "Long -" : "買い -",
   };
   const getCloseOrderAvailable = (action: OrderAction) =>
     action === "close-short"
@@ -2385,7 +2630,7 @@ export default function App() {
     const actionCloseOrderAvailable = getCloseOrderAvailable(action);
     if (orderLots > actionCloseOrderAvailable) {
       playEffect("error");
-      setOrderMessage("保有している玉数を超えて返済することはできません");
+      showOrderMessage("保有している玉数を超えて返済することはできません");
       return;
     }
 
@@ -2400,10 +2645,14 @@ export default function App() {
 
     if (currentIndex < 0 || !executionCandle) {
       playEffect("error");
-      setOrderMessage(
+      showOrderMessage(
         executionTiming === "same-close"
-          ? "対象日の終値がないため注文できません"
-          : "次の取引日がないため注文できません"
+          ? isEnglish
+            ? "Cannot order because the selected day has no close price"
+            : "対象日の終値がないため注文できません"
+          : isEnglish
+            ? "Cannot order because there is no next trading day"
+            : "次の取引日がないため注文できません"
       );
       return;
     }
@@ -2449,7 +2698,7 @@ export default function App() {
         },
       };
     });
-    setOrderMessage(
+    showOrderMessage(
       `${formatDateWithWeekday(executionCandle.time)}の${getExecutionTimingPriceLabel(
         executionTiming
       )}で約定予定です`
@@ -2475,7 +2724,7 @@ export default function App() {
         },
       };
     });
-    setOrderMessage("注文を取り消しました");
+    showOrderMessage("注文を取り消しました");
   };
 
   const resetTradingBook = () => {
@@ -2483,7 +2732,7 @@ export default function App() {
       ...books,
       [selectedDataPath]: createEmptyTradingBook(),
     }));
-    setOrderMessage("この銘柄の売買練習をリセットしました");
+    showOrderMessage("この銘柄の売買練習をリセットしました");
     setIsTradeLogOpen(false);
   };
 
@@ -2520,8 +2769,124 @@ export default function App() {
     const fileName = `${stockInfo.code || "trade"}_${stockInfo.name || "log"}_${fileDate}.csv`;
 
     downloadTextFile(fileName, `\uFEFF${csvText}`, "text/csv;charset=utf-8");
-    setOrderMessage("売買ログをCSV出力しました");
+    showOrderMessage(
+      isEnglish ? "Trade log exported as CSV" : "売買ログをCSV出力しました"
+    );
     playEffect("success");
+  };
+
+  const getRelatedTradeLogIds = (targetLog: TradeLog) => {
+    const relatedIds = new Set<string>();
+    const targetPositionIds = new Set(targetLog.positionIds ?? []);
+    const targetClosedIds = new Set(targetLog.closesPositionIds ?? []);
+
+    currentBook.logs.forEach((log) => {
+      if (log.id === targetLog.id) return;
+
+      const opensTargetClosedPosition = (log.positionIds ?? []).some((id) =>
+        targetClosedIds.has(id)
+      );
+      const closesTargetPosition = (log.closesPositionIds ?? []).some((id) =>
+        targetPositionIds.has(id)
+      );
+
+      if (opensTargetClosedPosition || closesTargetPosition) {
+        relatedIds.add(log.id);
+      }
+    });
+
+    return relatedIds;
+  };
+
+  const deleteTradeLog = (logId: string) => {
+    const targetLog = currentBook.logs.find((log) => log.id === logId);
+    if (!targetLog) return;
+
+    const relatedIds = getRelatedTradeLogIds(targetLog);
+    const isOpeningLog =
+      targetLog.action === "add-short" || targetLog.action === "add-long";
+    const confirmMessage =
+      isOpeningLog && relatedIds.size > 0
+        ? isEnglish
+          ? "This opening log has linked closing logs. Delete them together?"
+          : "この建てログに対応する返済ログも一緒に削除します。よろしいですか？"
+        : isEnglish
+          ? "Delete this trade log?"
+          : "この売買ログを削除しますか？";
+
+    if (!window.confirm(confirmMessage)) return;
+
+    setTradingBooks((books) => {
+      const book = books[selectedDataPath] ?? createEmptyTradingBook();
+      const target = book.logs.find((log) => log.id === logId);
+      if (!target) return books;
+
+      const idsToRemove = new Set<string>([logId]);
+      const targetIsOpening =
+        target.action === "add-short" || target.action === "add-long";
+
+      if (targetIsOpening) {
+        const targetPositionIds = new Set(target.positionIds ?? []);
+        book.logs.forEach((log) => {
+          if (
+            log.id !== target.id &&
+            (log.closesPositionIds ?? []).some((id) => targetPositionIds.has(id))
+          ) {
+            idsToRemove.add(log.id);
+          }
+        });
+      }
+
+      const removePositionIds = new Set(target.positionIds ?? []);
+      let shortPositions = book.shortPositions.filter(
+        (position) => !removePositionIds.has(position.id)
+      );
+      let longPositions = book.longPositions.filter(
+        (position) => !removePositionIds.has(position.id)
+      );
+
+      if (!targetIsOpening && target.closedPositions?.length) {
+        const restoredIds = new Set(
+          target.closedPositions.map((position) => position.id)
+        );
+        if (target.action === "close-short") {
+          shortPositions = [
+            ...target.closedPositions.filter(
+              (position) =>
+                !book.shortPositions.some((item) => item.id === position.id)
+            ),
+            ...shortPositions.filter(
+              (position) => !restoredIds.has(position.id)
+            ),
+          ];
+        }
+        if (target.action === "close-long") {
+          longPositions = [
+            ...target.closedPositions.filter(
+              (position) =>
+                !book.longPositions.some((item) => item.id === position.id)
+            ),
+            ...longPositions.filter(
+              (position) => !restoredIds.has(position.id)
+            ),
+          ];
+        }
+      }
+
+      return {
+        ...books,
+        [selectedDataPath]: {
+          ...book,
+          shortPositions,
+          longPositions,
+          logs: book.logs.filter((log) => !idsToRemove.has(log.id)),
+        },
+      };
+    });
+    setActiveTradeLogId("");
+    showOrderMessage(
+      isEnglish ? "Trade log deleted" : "売買ログを削除しました"
+    );
   };
 
   const resetDisplayedSettings = () => {
@@ -2591,7 +2956,7 @@ export default function App() {
 
   const addPaintMark = (type: PaintMarkType) => {
     if (!paintTargetDate) {
-      setOrderMessage("チャートの日付を選択してからメモを追加してください");
+      showOrderMessage("チャートの日付を選択してからメモを追加してください");
       return;
     }
 
@@ -2601,7 +2966,7 @@ export default function App() {
       if (enteredText === null) return;
       text = enteredText.trim();
       if (!text) {
-        setOrderMessage("メモ内容が空のため追加しませんでした");
+        showOrderMessage("メモ内容が空のため追加しませんでした");
         return;
       }
     }
@@ -2618,7 +2983,7 @@ export default function App() {
       ...marksByStock,
       [selectedDataPath]: [mark, ...(marksByStock[selectedDataPath] ?? [])],
     }));
-    setOrderMessage(
+    showOrderMessage(
       `${formatDateWithWeekday(paintTargetDate)}に${paintMarkTypeLabels[type]}を記録しました`
     );
   };
@@ -2630,7 +2995,7 @@ export default function App() {
         (mark) => mark.id !== id
       ),
     }));
-    setOrderMessage("チャートメモを削除しました");
+    showOrderMessage(isEnglish ? "Chart memo deleted" : "チャートメモを削除しました");
   };
 
   const clearCurrentStockPaintMarks = () => {
@@ -2638,7 +3003,11 @@ export default function App() {
       ...marksByStock,
       [selectedDataPath]: [],
     }));
-    setOrderMessage("この銘柄のチャートメモをすべて削除しました");
+    showOrderMessage(
+      isEnglish
+        ? "All chart memos for this symbol were deleted"
+        : "この銘柄のチャートメモをすべて削除しました"
+    );
   };
 
   useEffect(() => {
@@ -3042,7 +3411,7 @@ export default function App() {
     restoreVisibleLogicalRange(rangeBeforeClose);
   }, [getCurrentVisibleLogicalRange, restoreVisibleLogicalRange]);
 
-  const toggleFullscreen = async () => {
+  const toggleFullscreen = useCallback(async () => {
     try {
       if (document.fullscreenElement) {
         await document.exitFullscreen();
@@ -3052,9 +3421,13 @@ export default function App() {
       await document.documentElement.requestFullscreen();
     } catch (error) {
       console.error(error);
-      setOrderMessage("全画面表示を切り替えられませんでした");
+      showOrderMessage(
+        isEnglish
+          ? "Could not toggle fullscreen"
+          : "全画面表示を切り替えられませんでした"
+      );
     }
-  };
+  }, [isEnglish, showOrderMessage]);
 
   useEffect(() => {
     const isShortcutDisabledTarget = (target: EventTarget | null) => {
@@ -3078,10 +3451,7 @@ export default function App() {
         event.preventDefault();
         const nextTimeframe: Timeframe =
           key === "d" ? "daily" : key === "w" ? "weekly" : "monthly";
-        if (timeframe !== nextTimeframe) {
-          setIsChartLoading(true);
-          setTimeframe(nextTimeframe);
-        }
+        changeTimeframe(nextTimeframe);
         return;
       }
 
@@ -3132,6 +3502,8 @@ export default function App() {
     isDatePickerOpen,
     openPaintPractice,
     closePaintPractice,
+    changeTimeframe,
+    toggleFullscreen,
   ]);
 
   return (
@@ -3187,14 +3559,18 @@ export default function App() {
             gap: "6px",
           }}
         >
-          <span className="visually-hidden">銘柄</span>
+          <span className="visually-hidden">{ui.stock}</span>
           <select
             className="stock-select"
-            aria-label="銘柄"
+            aria-label={ui.stock}
             value={selectedDataPath}
             onChange={(event) => {
               const nextDataPath = event.target.value;
               anchorDailyDateRef.current = null;
+              returnDailyDateRef.current = null;
+              upperTimeframeMovedRef.current = false;
+              ignoreNextRangeSyncRef.current = false;
+              timeframeSwitchSyncRef.current = false;
               setCurrentDate("");
               setCurrentOhlc(null);
               setDateInputValue("");
@@ -3202,7 +3578,7 @@ export default function App() {
               setSelectedChartDate("");
               setTradingDates(new Set());
               setSelectedDailyCandles([]);
-              setOrderMessage("");
+              showOrderMessage("");
               setIsDatePickerOpen(false);
               setIsChartLoading(true);
               setSharesPerLot(
@@ -3245,7 +3621,7 @@ export default function App() {
         }}
       >
         <div className="toolbar-group timeframe-group">
-          <span className="toolbar-group-label">足種</span>
+          <span className="toolbar-group-label">{ui.timeframe}</span>
           <div className="segmented-control">
             {(["daily", "weekly", "monthly"] as Timeframe[]).map((value) => (
               <button
@@ -3253,12 +3629,15 @@ export default function App() {
                 type="button"
                 onClick={() => {
                   if (timeframe === value) return;
-                  setIsChartLoading(true);
-                  setTimeframe(value);
+                  changeTimeframe(value);
                 }}
                 className={timeframe === value ? "is-active" : ""}
               >
-                {timeframeLabels[value]}
+                {value === "daily"
+                  ? ui.daily
+                  : value === "weekly"
+                    ? ui.weekly
+                    : ui.monthly}
               </button>
             ))}
           </div>
@@ -3274,7 +3653,7 @@ export default function App() {
             fontSize: "14px",
           }}
         >
-          <span className="toolbar-group-label">表示</span>
+          <span className="toolbar-group-label">{ui.display}</span>
           <select
             className="display-bars-select"
             value={displayBarsOption}
@@ -3305,19 +3684,21 @@ export default function App() {
           >
             {displayBarsOptions.map((option) => (
               <option key={option.value} value={option.value}>
-                {option.label}
+                  {option.value === "auto"
+                    ? ui.autoBars
+                    : `${option.value}${ui.barsSuffix}`}
               </option>
             ))}
           </select>
           <span className="visible-bars-count">
-            表示中 {visibleBarsCount || displayBars}本
+            {ui.visibleBars} {visibleBarsCount || displayBars}{ui.barsSuffix}
           </span>
         </label>
 
         <button
           type="button"
           onClick={() => void toggleFullscreen()}
-          title="Fキーでも切り替えできます"
+          title={isEnglish ? "You can also press F" : "Fキーでも切り替えできます"}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -3337,14 +3718,14 @@ export default function App() {
             whiteSpace: "nowrap",
           }}
         >
-          ⛶ {isFullscreen ? "全画面解除" : "全画面"}
+          ⛶ {isFullscreen ? ui.exitFullscreen : ui.fullscreen}
         </button>
 
         <button
           type="button"
           onClick={() => setSoundEnabled((enabled) => !enabled)}
-          title="効果音のオン・オフを切り替えます"
-          aria-label="効果音のオン・オフ"
+          title={isEnglish ? "Toggle sound effects" : "効果音のオン・オフを切り替えます"}
+          aria-label={isEnglish ? "Toggle sound effects" : "効果音のオン・オフ"}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -3364,7 +3745,7 @@ export default function App() {
             whiteSpace: "nowrap",
           }}
         >
-          {soundEnabled ? "🔊 音あり" : "🔇 ミュート"}
+          {soundEnabled ? `🔊 ${ui.soundOn}` : `🔇 ${ui.muted}`}
         </button>
 
         <button
@@ -3392,7 +3773,7 @@ export default function App() {
             whiteSpace: "nowrap",
           }}
         >
-          ⚙ 設定
+          ⚙ {ui.settings}
         </button>
 
         </div>
@@ -3413,7 +3794,7 @@ export default function App() {
           className="bar-navigation-button"
           type="button"
           onClick={() => navigateRef.current?.(-1)}
-          aria-label="1本戻る"
+          aria-label={ui.backOneBar}
           style={{
             backgroundColor: "var(--panel-muted)",
             border: "1px solid var(--border-strong)",
@@ -3424,7 +3805,7 @@ export default function App() {
             fontSize: "14px",
           }}
         >
-          ← 1本戻る
+          ← {ui.backOneBar}
         </button>
 
         <div style={{ position: "relative" }}>
@@ -3449,7 +3830,7 @@ export default function App() {
               cursor: "pointer",
             }}
           >
-            現在日付: {currentDate || "読み込み中"}
+            {ui.currentDate}: {currentDate || ui.loading}
           </button>
 
           {isDatePickerOpen && (
@@ -3613,12 +3994,16 @@ export default function App() {
           className="bar-navigation-button"
           type="button"
           onClick={() => navigateRef.current?.(1)}
-          aria-label="1本進む"
+          aria-label={ui.forwardOneBar}
           disabled={!canNavigateForward}
           title={
             canNavigateForward
-              ? "次の足へ進みます"
-              : "最新データのため、これ以上進めません"
+              ? isEnglish
+                ? "Move to the next bar"
+                : "次の足へ進みます"
+              : isEnglish
+                ? "Already at the latest available data"
+                : "最新データのため、これ以上進めません"
           }
           style={{
             backgroundColor: "var(--panel-muted)",
@@ -3631,7 +4016,7 @@ export default function App() {
             opacity: canNavigateForward ? 1 : 0.45,
           }}
         >
-          1本進む →
+          {ui.forwardOneBar} →
         </button>
 
         <button
@@ -3641,13 +4026,19 @@ export default function App() {
           onClick={() => jumpToDateRef.current?.(selectedChartDate)}
           title={
             selectedChartDate
-              ? "選択した日をチャート右端へ移動します（Enter）"
-              : "チャート上のローソク足をクリックしてください"
+              ? isEnglish
+                ? "Move the selected day to the right edge (Enter)"
+                : "選択した日をチャート右端へ移動します（Enter）"
+              : isEnglish
+                ? "Click a candlestick on the chart"
+                : "チャート上のローソク足をクリックしてください"
           }
         >
           {selectedChartDate
-            ? `選択: ${formatDateWithWeekday(selectedChartDate)} → 右端`
-            : "ローソク足を選択"}
+            ? `${ui.selected}: ${formatDateWithWeekday(selectedChartDate)} → ${
+                isEnglish ? "Right edge" : "右端"
+              }`
+            : ui.selectCandle}
           {selectedChartDate && <kbd>Enter</kbd>}
         </button>
 
@@ -3667,25 +4058,25 @@ export default function App() {
           }}
         >
           <span>
-            始値:{" "}
+            {ui.open}:{" "}
             {currentOhlc
               ? formatPrice(currentOhlc.open, selectedInstrument.priceDecimals)
               : "-"}
           </span>
           <span>
-            高値:{" "}
+            {ui.high}:{" "}
             {currentOhlc
               ? formatPrice(currentOhlc.high, selectedInstrument.priceDecimals)
               : "-"}
           </span>
           <span>
-            安値:{" "}
+            {ui.low}:{" "}
             {currentOhlc
               ? formatPrice(currentOhlc.low, selectedInstrument.priceDecimals)
               : "-"}
           </span>
           <span>
-            終値:{" "}
+            {ui.closePrice}:{" "}
             {currentOhlc
               ? formatPrice(currentOhlc.close, selectedInstrument.priceDecimals)
               : "-"}
@@ -3706,17 +4097,27 @@ export default function App() {
           }}
         />
 
+        <div className="timeframe-watermark" aria-hidden="true">
+          {timeframe === "daily"
+            ? ui.daily
+            : timeframe === "weekly"
+              ? ui.weekly
+              : ui.monthly}
+        </div>
+
         {isPaintPracticeOpen && isPaintCanvasActive && (
           <div className="paint-canvas-workspace">
             <div className="paint-canvas-toolbar">
               <div>
-                <strong>ペイントキャンバス</strong>
+                <strong>{ui.paintCanvas}</strong>
                 <span>
                   {getStockInfoFromPath(selectedDataPath).code}{" "}
                   {getStockInfoFromPath(selectedDataPath).name}・
                   {dateInputValue
                     ? formatDateWithWeekday(dateInputValue)
-                    : "日付未選択"}
+                    : isEnglish
+                      ? "No date selected"
+                      : "日付未選択"}
                 </span>
               </div>
               <div className="paint-canvas-zoom">
@@ -3803,12 +4204,14 @@ export default function App() {
                       )}px`,
                     }}
                   />
-                  <button type="submit" aria-label="テキストを追加">
-                    追加
+                  <button type="submit" aria-label={ui.addText}>
+                    {ui.addText}
                   </button>
                   <button
                     type="button"
-                    aria-label="テキスト入力を取消"
+                    aria-label={
+                      isEnglish ? "Cancel text input" : "テキスト入力を取消"
+                    }
                     onClick={() => setPaintTextEditor(null)}
                   >
                     ×
@@ -3818,11 +4221,15 @@ export default function App() {
             </div>
 
             <label className="paint-note-area">
-              <span>メモ（任意）</span>
+              <span>{isEnglish ? "Memo (optional)" : "メモ（任意）"}</span>
               <textarea
                 value={paintPracticeNote}
                 onChange={(event) => setPaintPracticeNote(event.target.value)}
-                placeholder="分析内容や振り返りを記録"
+                placeholder={
+                  isEnglish
+                    ? "Record analysis notes or review points"
+                    : "分析内容や振り返りを記録"
+                }
               />
             </label>
           </div>
@@ -3857,20 +4264,18 @@ export default function App() {
 
       <aside
         className="paint-practice-panel"
-        aria-label="ペイント練習"
+        aria-label={ui.paintPractice}
         aria-hidden={!isPaintPracticeOpen}
       >
         <div className="paint-panel-header">
           <div>
-            <h2>ペイント練習</h2>
-            <p>
-              現在のチャートを画像として取り込み、線やメモを書き込んで振り返ります。
-            </p>
+            <h2>{ui.paintPractice}</h2>
+            <p>{ui.paintPracticeDescription}</p>
           </div>
           <button
             type="button"
             onClick={closePaintPractice}
-            aria-label="ペイント練習を閉じる"
+            aria-label={isEnglish ? "Close paint practice" : "ペイント練習を閉じる"}
           >
             ×
           </button>
@@ -3878,11 +4283,11 @@ export default function App() {
 
         <div className="paint-panel-body">
           <div className="paint-workflow">
-            <span>ライブチャートで分析</span>
+            <span>{isEnglish ? "Analyze live chart" : "ライブチャートで分析"}</span>
             <b>→</b>
-            <span>スクショ取得</span>
+            <span>{isEnglish ? "Capture" : "スクショ取得"}</span>
             <b>→</b>
-            <span>描画・振り返り</span>
+            <span>{isEnglish ? "Draw and review" : "描画・振り返り"}</span>
           </div>
 
           <button
@@ -3893,15 +4298,15 @@ export default function App() {
           >
             <span>▣</span>
             {isPaintCanvasActive
-              ? "現在のチャート画像へ置き換え"
-              : "現在のチャートをスクショして開始"}
+              ? ui.replaceChartImage
+              : ui.captureChart}
           </button>
           <p className="capture-chart-help">
-            押す前に日付・表示位置・縮尺を調整できます。
+            {ui.captureHelp}
           </p>
 
           <section className="paint-control-section">
-            <h3>描画ツール</h3>
+            <h3>{ui.drawingTools}</h3>
             <div className="paint-tool-grid">
               {paintPracticeTools.map((tool) => (
                 <button
@@ -3923,14 +4328,14 @@ export default function App() {
                   ) : (
                     <span>{tool.icon}</span>
                   )}
-                  {tool.label}
+                  {paintPracticeToolLabels[tool.value]}
                 </button>
               ))}
             </div>
           </section>
 
           <section className="paint-control-section">
-            <h3>色</h3>
+            <h3>{ui.color}</h3>
             <div className="paint-color-row">
               {paintPracticeColors.map((color) => (
                 <button
@@ -3942,7 +4347,9 @@ export default function App() {
                   style={{ backgroundColor: color }}
                   onClick={() => setPaintPracticeColor(color)}
                   disabled={!isPaintDrawingReady}
-                  aria-label={`描画色 ${color}`}
+                  aria-label={
+                    isEnglish ? `Drawing color ${color}` : `描画色 ${color}`
+                  }
                 />
               ))}
               {paintCustomColors.map((color) => (
@@ -3955,14 +4362,22 @@ export default function App() {
                     style={{ backgroundColor: color }}
                     onClick={() => setPaintPracticeColor(color)}
                     disabled={!isPaintDrawingReady}
-                    aria-label={`カスタム描画色 ${color}`}
+                    aria-label={
+                      isEnglish
+                        ? `Custom drawing color ${color}`
+                        : `カスタム描画色 ${color}`
+                    }
                   />
                   <button
                     type="button"
                     className="paint-custom-swatch-remove"
                     onClick={() => removeCustomPaintColor(color)}
-                    aria-label={`カスタム描画色 ${color}を削除`}
-                    title="この色を削除"
+                    aria-label={
+                      isEnglish
+                        ? `Remove custom drawing color ${color}`
+                        : `カスタム描画色 ${color}を削除`
+                    }
+                    title={isEnglish ? "Remove this color" : "この色を削除"}
                   >
                     ×
                   </button>
@@ -3983,14 +4398,16 @@ export default function App() {
                     customColorEditingIndexRef.current = null;
                   }}
                   disabled={!isPaintDrawingReady}
-                  aria-label="カスタム描画色"
+                  aria-label={
+                    isEnglish ? "Custom drawing color" : "カスタム描画色"
+                  }
                 />
               </label>
             </div>
           </section>
 
           <section className="paint-control-section">
-            <h3>太さ</h3>
+            <h3>{isEnglish ? "Width" : "太さ"}</h3>
             <div className="paint-width-row">
               {[1, 3, 6, 10].map((width) => (
                 <button
@@ -4001,7 +4418,9 @@ export default function App() {
                   }
                   onClick={() => setPaintPracticeWidth(width)}
                   disabled={!isPaintDrawingReady}
-                  aria-label={`線の太さ ${width}`}
+                  aria-label={
+                    isEnglish ? `Line width ${width}` : `線の太さ ${width}`
+                  }
                 >
                   <span style={{ height: `${Math.max(1, width / 2)}px` }} />
                 </button>
@@ -4010,28 +4429,28 @@ export default function App() {
           </section>
 
           <section className="paint-control-section">
-            <h3>操作</h3>
+            <h3>{isEnglish ? "Actions" : "操作"}</h3>
             <div className="paint-action-grid">
               <button
                 type="button"
                 onClick={undoPaintDrawing}
                 disabled={paintUndoStack.length === 0}
               >
-                ↶ 元に戻す
+                ↶ {ui.undo}
               </button>
               <button
                 type="button"
                 onClick={redoPaintDrawing}
                 disabled={paintRedoStack.length === 0}
               >
-                ↷ やり直し
+                ↷ {ui.redo}
               </button>
               <button
                 type="button"
                 onClick={clearPaintDrawing}
                 disabled={paintObjects.length === 0}
               >
-                全消去
+                {ui.clearAll}
               </button>
             </div>
           </section>
@@ -4046,17 +4465,17 @@ export default function App() {
             onClick={downloadPaintPng}
             disabled={!isPaintDrawingReady}
           >
-            PNGダウンロード
+            {ui.downloadPng}
           </button>
           <button
             type="button"
             onClick={saveCurrentPaintPractice}
             disabled={!isPaintDrawingReady}
           >
-            ペイントを保存
+            {ui.savePaint}
           </button>
           <button type="button" onClick={openPaintHistory}>
-            履歴を見る
+            {ui.viewHistory}
           </button>
         </div>
       </aside>
@@ -4075,17 +4494,21 @@ export default function App() {
             className="paint-history-dialog"
             role="dialog"
             aria-modal="true"
-            aria-label="ペイント履歴"
+            aria-label={ui.paintHistory}
           >
             <div className="paint-history-header">
               <div>
-                <h2>ペイント履歴</h2>
-                <span>IndexedDBに保存されたペイント結果</span>
+                <h2>{ui.paintHistory}</h2>
+                <span>
+                  {isEnglish
+                    ? "Paint results saved in IndexedDB"
+                    : "IndexedDBに保存されたペイント結果"}
+                </span>
               </div>
               <button
                 type="button"
                 onClick={() => setIsPaintHistoryOpen(false)}
-                aria-label="ペイント履歴を閉じる"
+                aria-label={isEnglish ? "Close paint history" : "ペイント履歴を閉じる"}
               >
                 ×
               </button>
@@ -4093,7 +4516,7 @@ export default function App() {
 
             {paintSavedItems.length === 0 ? (
               <div className="empty-paint-history">
-                保存されたペイントはありません
+                {ui.noSavedPaint}
               </div>
             ) : (
               <div className="paint-history-list">
@@ -4118,13 +4541,13 @@ export default function App() {
                         type="button"
                         onClick={() => loadSavedPaintPractice(item)}
                       >
-                        読み込む
+                        {ui.load}
                       </button>
                       <button
                         type="button"
                         onClick={() => deleteSavedPaintPractice(item.id)}
                       >
-                        削除
+                        {ui.delete}
                       </button>
                     </div>
                   </article>
@@ -4140,30 +4563,30 @@ export default function App() {
           type="button"
           className="paint-panel-open-button"
           onClick={openPaintPractice}
-          title="ペイント練習を開く"
-          aria-label="ペイント練習を開く"
+          title={isEnglish ? "Open paint practice" : "ペイント練習を開く"}
+          aria-label={isEnglish ? "Open paint practice" : "ペイント練習を開く"}
         >
           <span className="paint-panel-open-arrow">›</span>
-          <span className="paint-panel-open-label">ペイント練習</span>
+          <span className="paint-panel-open-label">{ui.paintPractice}</span>
         </button>
       )}
 
       <aside
         className="trade-panel"
-        aria-label="売買練習パネル"
+        aria-label={ui.tradePractice}
         aria-hidden={!isTradePanelOpen}
       >
         <section className="trade-section position-section">
           <div className="section-heading-row">
-            <h2>現在の建玉</h2>
+            <h2>{ui.currentPosition}</h2>
             <div className="panel-header-actions">
               <span className="mock-badge">FIFO</span>
               <button
                 type="button"
                 className="panel-toggle-button"
                 onClick={() => setIsTradePanelOpen(false)}
-                title="売買パネルを閉じる"
-                aria-label="売買パネルを閉じる"
+                title={isEnglish ? "Close trade panel" : "売買パネルを閉じる"}
+                aria-label={isEnglish ? "Close trade panel" : "売買パネルを閉じる"}
               >
                 ›
               </button>
@@ -4172,12 +4595,12 @@ export default function App() {
 
           <div className="position-display">
             <div className="position-side position-short">
-              <span>売玉</span>
+              <span>{ui.shortLots}</span>
               <strong>{currentShortLots}</strong>
             </div>
             <span className="position-separator">-</span>
             <div className="position-side position-long">
-              <span>買玉</span>
+              <span>{ui.longLots}</span>
               <strong>{currentLongLots}</strong>
             </div>
           </div>
@@ -4185,21 +4608,21 @@ export default function App() {
 
         <section className="trade-section profit-section">
           <div className="section-heading-row">
-            <h2>損益</h2>
+            <h2>{ui.profit}</h2>
             <button
               type="button"
               className="icon-button"
               onClick={() => setShowProfit((value) => !value)}
-              title={showProfit ? "損益を隠す" : "損益を表示"}
-              aria-label={showProfit ? "損益を隠す" : "損益を表示"}
+              title={showProfit ? ui.hide : ui.show}
+              aria-label={showProfit ? ui.hide : ui.show}
             >
-              {showProfit ? "表示" : "非表示"}
+              {showProfit ? ui.show : ui.hide}
             </button>
           </div>
 
           <dl className="profit-list">
             <div>
-              <dt>確定損益</dt>
+              <dt>{ui.realizedProfit}</dt>
               <dd className={profitClassName(realizedProfit)}>
                 {showProfit
                   ? formatCurrencyAmount(
@@ -4210,7 +4633,7 @@ export default function App() {
               </dd>
             </div>
             <div>
-              <dt>含み損益</dt>
+              <dt>{ui.unrealizedProfit}</dt>
               <dd className={profitClassName(unrealizedProfit)}>
                 {showProfit
                   ? formatCurrencyAmount(
@@ -4221,7 +4644,7 @@ export default function App() {
               </dd>
             </div>
             <div className="profit-total">
-              <dt>総合損益</dt>
+              <dt>{ui.totalProfit}</dt>
               <dd className={profitClassName(totalProfit)}>
                 {showProfit
                   ? formatCurrencyAmount(
@@ -4235,7 +4658,7 @@ export default function App() {
         </section>
 
         <section className="trade-section order-section">
-          <h2>注文</h2>
+          <h2>{ui.order}</h2>
 
           <div className="order-action-grid">
             {(
@@ -4260,7 +4683,7 @@ export default function App() {
                   }`}
                   onClick={() => {
                     setOrderAction(action);
-                    setOrderMessage("");
+                    showOrderMessage("");
                     placeOrder(action);
                   }}
                   disabled={!isEnabled}
@@ -4283,14 +4706,14 @@ export default function App() {
 
           <div className="lot-control-row">
             <div>
-              <span className="field-label">注文玉数</span>
+              <span className="field-label">{ui.orderLots}</span>
               <span className="lot-summary">{instrumentUnitSummary}</span>
             </div>
             <div className="lot-stepper">
               <button
                 type="button"
                 onClick={() => setOrderLots((value) => Math.max(1, value - 1))}
-                aria-label="注文玉数を減らす"
+                aria-label={isEnglish ? "Decrease order lots" : "注文玉数を減らす"}
               >
                 -
               </button>
@@ -4298,7 +4721,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setOrderLots((value) => Math.min(99, value + 1))}
-                aria-label="注文玉数を増やす"
+                aria-label={isEnglish ? "Increase order lots" : "注文玉数を増やす"}
               >
                 +
               </button>
@@ -4306,9 +4729,9 @@ export default function App() {
           </div>
 
           <details className="order-detail-settings">
-            <summary>数量設定</summary>
+            <summary>{ui.quantitySettings}</summary>
             <label className="lot-setting">
-              <span>1玉あたり数量</span>
+              <span>{ui.quantityPerLot}</span>
               <span className="lot-setting-control">
                 <input
                   type="number"
@@ -4316,7 +4739,7 @@ export default function App() {
                   max="100000"
                   step="1"
                   value={sharesPerLot}
-                  aria-label="1玉あたり数量"
+                  aria-label={ui.quantityPerLot}
                   onChange={(event) => {
                     const nextValue = Number(event.target.value);
                     if (Number.isFinite(nextValue) && nextValue >= 1) {
@@ -4328,7 +4751,7 @@ export default function App() {
               </span>
             </label>
             <div className="instrument-unit-summary">
-              <span>計算単位</span>
+              <span>{ui.calculationUnit}</span>
               <strong>
                 {instrumentUnitSummary}
                 {instrumentMultiplierSummary}
@@ -4336,18 +4759,12 @@ export default function App() {
             </div>
           </details>
 
-          <div className="execution-row">
-            <span>約定タイミング</span>
-            <strong>
-              {tradingSettings.executionTiming === "same-close"
-                ? "当日の終値"
-                : "次の取引日の始値"}
-            </strong>
-          </div>
-
           {pendingOrders.length > 0 && (
             <div className="pending-order">
-              <span>注文待機中 {pendingOrders.length}件</span>
+              <span>
+                {ui.pendingOrders} {pendingOrders.length}
+                {isEnglish ? "" : "件"}
+              </span>
               {pendingOrders.map((order) => (
                 <div className="pending-order-row" key={order.id}>
                   <strong>
@@ -4360,19 +4777,21 @@ export default function App() {
                     type="button"
                     onClick={() => cancelPendingOrder(order.id)}
                   >
-                    取消
+                    {ui.cancel}
                   </button>
                 </div>
               ))}
             </div>
           )}
 
-          {orderMessage && <div className="order-message">{orderMessage}</div>}
+          {displayedOrderMessage && (
+            <div className="order-message">{displayedOrderMessage}</div>
+          )}
         </section>
 
         <section className="trade-section chart-memo-section">
           <div className="section-heading-row">
-            <h2>チャートメモ</h2>
+            <h2>{ui.chartMemo}</h2>
             <span className="mock-badge">{currentPaintMarks.length}</span>
           </div>
 
@@ -4393,7 +4812,9 @@ export default function App() {
                 lineHeight: 1.45,
               }}
             >
-              選択した日付に判断や気付きを記録します。
+              {isEnglish
+                ? "Record decisions and observations for the selected date."
+                : "選択した日付に判断や気付きを記録します。"}
             </p>
             <div
               style={{
@@ -4403,7 +4824,7 @@ export default function App() {
                 backgroundColor: "var(--panel-muted)",
               }}
             >
-              <span style={{ color: "var(--muted)" }}>対象日</span>
+              <span style={{ color: "var(--muted)" }}>{ui.targetDate}</span>
               <strong
                 style={{
                   display: "block",
@@ -4413,7 +4834,7 @@ export default function App() {
               >
                 {paintTargetDate
                   ? formatDateWithWeekday(paintTargetDate)
-                  : "ローソク足を選択"}
+                  : ui.selectCandle}
               </strong>
             </div>
 
@@ -4438,7 +4859,7 @@ export default function App() {
                   opacity: paintTargetDate ? 1 : 0.55,
                 }}
               >
-                ↑ 買い候補
+                ↑ {ui.buyCandidate}
               </button>
               <button
                 type="button"
@@ -4454,7 +4875,7 @@ export default function App() {
                   opacity: paintTargetDate ? 1 : 0.55,
                 }}
               >
-                ↓ 売り候補
+                ↓ {ui.sellCandidate}
               </button>
               <button
                 type="button"
@@ -4470,7 +4891,7 @@ export default function App() {
                   opacity: paintTargetDate ? 1 : 0.55,
                 }}
               >
-                メモ追加
+                {ui.addMemo}
               </button>
             </div>
 
@@ -4523,7 +4944,7 @@ export default function App() {
                         cursor: "pointer",
                       }}
                     >
-                      削除
+                      {ui.delete}
                     </button>
                   </div>
                 ))}
@@ -4536,7 +4957,9 @@ export default function App() {
                 onClick={() => {
                   if (
                     window.confirm(
-                      "この銘柄のチャートメモをすべて削除しますか？"
+                      isEnglish
+                        ? "Delete all chart memos for this symbol?"
+                        : "この銘柄のチャートメモをすべて削除しますか？"
                     )
                   ) {
                     clearCurrentStockPaintMarks();
@@ -4551,7 +4974,7 @@ export default function App() {
                   cursor: "pointer",
                 }}
               >
-                この銘柄のメモを全削除
+                {ui.clearStockMemos}
               </button>
             )}
           </div>
@@ -4559,7 +4982,7 @@ export default function App() {
 
         <div className="trade-panel-footer">
           <button type="button" onClick={() => setIsTradeLogOpen(true)}>
-            売買ログ
+            {ui.tradeLog}
             {currentBook.logs.length > 0 ? ` (${currentBook.logs.length})` : ""}
           </button>
           <button
@@ -4568,22 +4991,32 @@ export default function App() {
             disabled={currentBook.logs.length === 0}
             title={
               currentBook.logs.length === 0
-                ? "約定履歴がないためCSV出力できません"
-                : "売買ログをCSV出力します"
+                ? isEnglish
+                  ? "No executed trades to export"
+                  : "約定履歴がないためCSV出力できません"
+                : isEnglish
+                  ? "Export trade log as CSV"
+                  : "売買ログをCSV出力します"
             }
           >
-            CSV出力
+            {ui.exportCsv}
           </button>
           <button
             type="button"
             className="reset-button"
             onClick={() => {
-              if (window.confirm("この銘柄の建玉と売買ログを消去しますか？")) {
+              if (
+                window.confirm(
+                  isEnglish
+                    ? "Clear positions and trade logs for this symbol?"
+                    : "この銘柄の建玉と売買ログを消去しますか？"
+                )
+              ) {
                 resetTradingBook();
               }
             }}
           >
-            練習をリセット
+            {ui.resetPractice}
           </button>
         </div>
       </aside>
@@ -4634,7 +5067,7 @@ export default function App() {
               }}
             >
               <div>
-                <h2 style={{ margin: 0, fontSize: "20px" }}>設定</h2>
+                <h2 style={{ margin: 0, fontSize: "20px" }}>{ui.settings}</h2>
                 <p
                   style={{
                     margin: "6px 0 0",
@@ -4642,8 +5075,36 @@ export default function App() {
                     fontSize: "12px",
                   }}
                 >
-                  変更した設定はチャートへ反映されます。保存すると次回起動時も維持されます。
+                  {ui.settingsDescription}
                 </p>
+                <label
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    marginTop: "10px",
+                    color: "#cbd5e1",
+                    fontSize: "13px",
+                  }}
+                >
+                  <span>{ui.language}</span>
+                  <select
+                    value={language}
+                    onChange={(event) =>
+                      setLanguage(event.target.value as AppLanguage)
+                    }
+                    style={{
+                      border: "1px solid #475569",
+                      borderRadius: "6px",
+                      backgroundColor: "#111827",
+                      color: "#f8fafc",
+                      padding: "6px 8px",
+                    }}
+                  >
+                    <option value="ja">日本語</option>
+                    <option value="en">English</option>
+                  </select>
+                </label>
               </div>
               <button
                 type="button"
@@ -4652,9 +5113,10 @@ export default function App() {
                   setMaDisplaySettings(savedSettings.maSettings);
                   setAppearanceSettings(savedSettings.appearanceSettings);
                   setTradingSettings(savedSettings.tradingSettings);
+                  setLanguage(savedSettings.language);
                   setIsAppearanceSettingsOpen(false);
                 }}
-                aria-label="外観設定を閉じる"
+                aria-label={isEnglish ? "Close settings" : "外観設定を閉じる"}
                 style={{
                   width: "34px",
                   height: "34px",
@@ -4681,9 +5143,9 @@ export default function App() {
               >
                 {(
                   [
-                    { value: "ma", label: "移動平均線" },
-                    { value: "appearance", label: "チャート外観" },
-                    { value: "trading", label: "売買設定" },
+                    { value: "ma", label: ui.movingAverages },
+                    { value: "appearance", label: ui.chartAppearance },
+                    { value: "trading", label: ui.tradeSettings },
                   ] as Array<{ value: SettingsTab; label: string }>
                 ).map((tab) => {
                   const isActive = settingsTab === tab.value;
@@ -4732,14 +5194,14 @@ export default function App() {
                       borderBottom: "1px solid #334155",
                     }}
                   >
-                    <span>表示</span>
-                    <span>期間</span>
-                    <span>色</span>
-                    <span>線の太さ</span>
-                    <span>スタイル</span>
-                    <span>見本</span>
-                    <span>透明度</span>
-                    <span>削除</span>
+                    <span>{isEnglish ? "Display" : "表示"}</span>
+                    <span>{isEnglish ? "Period" : "期間"}</span>
+                    <span>{isEnglish ? "Color" : "色"}</span>
+                    <span>{isEnglish ? "Width" : "線の太さ"}</span>
+                    <span>{isEnglish ? "Style" : "スタイル"}</span>
+                    <span>{isEnglish ? "Sample" : "見本"}</span>
+                    <span>{isEnglish ? "Opacity" : "透明度"}</span>
+                    <span>{ui.delete}</span>
                   </div>
 
                   {maDisplaySettings.map((setting) => (
@@ -4808,7 +5270,7 @@ export default function App() {
                             padding: "6px",
                           }}
                         />
-                        日
+                        {isEnglish ? "d" : "日"}
                       </label>
                       <input
                         type="color"
@@ -4818,7 +5280,11 @@ export default function App() {
                             color: event.target.value,
                           })
                         }
-                        aria-label={`${setting.period}日の色`}
+                        aria-label={
+                          isEnglish
+                            ? `${setting.period} day moving average color`
+                            : `${setting.period}日の色`
+                        }
                         style={{
                           width: "44px",
                           height: "32px",
@@ -4897,7 +5363,11 @@ export default function App() {
                               opacity: Number(event.target.value) / 100,
                             })
                           }
-                          aria-label={`${setting.period}日の透明度`}
+                          aria-label={
+                            isEnglish
+                              ? `${setting.period} day moving average opacity`
+                              : `${setting.period}日の透明度`
+                          }
                           style={{ width: "76px" }}
                         />
                         <span
@@ -4922,7 +5392,7 @@ export default function App() {
                           cursor: "pointer",
                         }}
                       >
-                        削除
+                        {ui.delete}
                       </button>
                     </div>
                   ))}
@@ -4948,7 +5418,7 @@ export default function App() {
                         fontWeight: 700,
                       }}
                     >
-                      ＋ 移動平均線を追加
+                      ＋ {isEnglish ? "Add Moving Average" : "移動平均線を追加"}
                     </button>
                   </div>
 
@@ -4962,7 +5432,7 @@ export default function App() {
                         fontSize: "12px",
                       }}
                     >
-                      線スタイル見本
+                      {isEnglish ? "Line Style Samples" : "線スタイル見本"}
                       <div
                         style={{
                           display: "grid",
@@ -4994,7 +5464,7 @@ export default function App() {
                         fontSize: "12px",
                       }}
                     >
-                      プレビュー
+                      {isEnglish ? "Preview" : "プレビュー"}
                       <div
                         style={{
                           display: "flex",
@@ -5047,7 +5517,7 @@ export default function App() {
                       borderBottom: "1px solid #334155",
                     }}
                   >
-                    <strong>約定タイミング</strong>
+                    <strong>{isEnglish ? "Execution Timing" : "約定タイミング"}</strong>
                     <div
                       style={{
                         display: "grid",
@@ -5058,15 +5528,19 @@ export default function App() {
                         [
                           {
                             value: "next-open",
-                            label: "次の取引日の始値",
+                            label: ui.nextOpen,
                             description:
-                              "今まで通りの動きです。注文した次の取引日の始値で約定します。",
+                              isEnglish
+                                ? "Orders are filled at the next trading day's open."
+                                : "今まで通りの動きです。注文した次の取引日の始値で約定します。",
                           },
                           {
                             value: "same-close",
-                            label: "当日の終値",
+                            label: ui.sameClose,
                             description:
-                              "表示中の日付の終値で約定します。終値ベースで素早く検証したい時に使います。",
+                              isEnglish
+                                ? "Orders are filled at the selected day's close."
+                                : "表示中の日付の終値で約定します。終値ベースで素早く検証したい時に使います。",
                           },
                         ] as Array<{
                           value: ExecutionTiming;
@@ -5120,7 +5594,9 @@ export default function App() {
                       lineHeight: 1.7,
                     }}
                   >
-                    変更後に入れる注文から反映されます。すでに注文済みの約定予定は、注文時の設定で処理されます。
+                    {isEnglish
+                      ? "Changes apply to new orders. Existing pending orders keep the timing selected when they were placed."
+                      : "変更後に入れる注文から反映されます。すでに注文済みの約定予定は、注文時の設定で処理されます。"}
                   </div>
                 </div>
               ) : (
@@ -5142,7 +5618,7 @@ export default function App() {
                       borderBottom: "1px solid #334155",
                     }}
                   >
-                    <strong>背景テーマ</strong>
+                    <strong>{isEnglish ? 'Background Theme' : '背景テーマ'}</strong>
                     <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                       {(Object.keys(chartThemeLabels) as ChartTheme[]).map(
                         (theme) => {
@@ -5166,7 +5642,16 @@ export default function App() {
                                 cursor: "pointer",
                               }}
                             >
-                              {chartThemeLabels[theme]}
+                              {isEnglish
+                                ? {
+                                    dark: "Dark",
+                                    "dark-blue": "Dark Blue",
+                                    black: "Black",
+                                    light: "Light",
+                                    "light-gray": "Light Gray",
+                                    ivory: "Ivory",
+                                  }[theme]
+                                : chartThemeLabels[theme]}
                             </button>
                           );
                         }
@@ -5184,7 +5669,7 @@ export default function App() {
                       borderBottom: "1px solid #334155",
                     }}
                   >
-                    <strong>グリッド表示</strong>
+                    <strong>{isEnglish ? 'Grid' : 'グリッド表示'}</strong>
                     <label
                       style={{
                         display: "inline-flex",
@@ -5203,7 +5688,7 @@ export default function App() {
                           )
                         }
                       />
-                      表示する
+                      {isEnglish ? 'Show' : '表示する'}
                     </label>
                   </div>
 
@@ -5217,7 +5702,7 @@ export default function App() {
                       borderBottom: "1px solid #334155",
                     }}
                   >
-                    <strong>グリッドの濃さ</strong>
+                    <strong>{isEnglish ? 'Grid Strength' : 'グリッドの濃さ'}</strong>
                     <div style={{ display: "flex", gap: "6px" }}>
                       {(["small", "medium", "large"] as SettingSize[]).map(
                         (size) => {
@@ -5243,10 +5728,16 @@ export default function App() {
                               }}
                             >
                               {size === "small"
-                                ? "薄い"
+                                ? isEnglish
+                                  ? "Light"
+                                  : "薄い"
                                 : size === "medium"
-                                  ? "中"
-                                  : "濃い"}
+                                  ? isEnglish
+                                    ? "Medium"
+                                    : "中"
+                                  : isEnglish
+                                    ? "Strong"
+                                    : "濃い"}
                             </button>
                           );
                         }
@@ -5264,7 +5755,7 @@ export default function App() {
                       borderBottom: "1px solid #334155",
                     }}
                   >
-                    <strong>配色プリセット</strong>
+                    <strong>{isEnglish ? "Color Presets" : "配色プリセット"}</strong>
                     <div
                       style={{
                         display: "grid",
@@ -5332,10 +5823,12 @@ export default function App() {
                                   border: "1px solid rgba(248, 250, 252, 0.45)",
                                 }}
                               />
-                              {preset.label}
+                              {isEnglish ? preset.labelEn : preset.label}
                             </span>
                             <span style={{ color: "#cbd5e1", fontSize: "12px" }}>
-                              {preset.description}
+                              {isEnglish
+                                ? preset.descriptionEn
+                                : preset.description}
                             </span>
                           </button>
                         );
@@ -5345,8 +5838,14 @@ export default function App() {
 
                   {(
                     [
-                      ["bullishColor", "陽線カラー（上昇）"],
-                      ["bearishColor", "陰線カラー（下落）"],
+                      [
+                        "bullishColor",
+                        isEnglish ? "Bullish Color (Rising)" : "陽線カラー（上昇）",
+                      ],
+                      [
+                        "bearishColor",
+                        isEnglish ? "Bearish Color (Falling)" : "陰線カラー（下落）",
+                      ],
                     ] as Array<["bullishColor" | "bearishColor", string]>
                   ).map(([key, label]) => (
                     <div
@@ -5406,7 +5905,7 @@ export default function App() {
                   cursor: "pointer",
                 }}
               >
-                リセット
+                {isEnglish ? "Reset" : "リセット"}
               </button>
               <div style={{ display: "flex", gap: "10px" }}>
                 <button
@@ -5416,6 +5915,7 @@ export default function App() {
                     setMaDisplaySettings(savedSettings.maSettings);
                     setAppearanceSettings(savedSettings.appearanceSettings);
                     setTradingSettings(savedSettings.tradingSettings);
+                    setLanguage(savedSettings.language);
                     setIsAppearanceSettingsOpen(false);
                   }}
                   style={{
@@ -5428,7 +5928,7 @@ export default function App() {
                     cursor: "pointer",
                   }}
                 >
-                  キャンセル
+                  {ui.cancel}
                 </button>
                 <button
                   type="button"
@@ -5437,6 +5937,7 @@ export default function App() {
                       maSettings: maDisplaySettings,
                       appearanceSettings,
                       tradingSettings,
+                      language,
                     });
                     setIsAppearanceSettingsOpen(false);
                   }}
@@ -5451,7 +5952,7 @@ export default function App() {
                     fontWeight: 700,
                   }}
                 >
-                  保存
+                  {ui.save}
                 </button>
               </div>
             </div>
@@ -5473,11 +5974,11 @@ export default function App() {
             className="trade-log-dialog"
             role="dialog"
             aria-modal="true"
-            aria-label="売買ログ"
+            aria-label={ui.tradeLog}
           >
             <div className="trade-log-header">
               <div>
-                <h2>売買ログ</h2>
+                <h2>{ui.tradeLog}</h2>
                 <span>
                   {getStockInfoFromPath(selectedDataPath).code}{" "}
                   {getStockInfoFromPath(selectedDataPath).name}
@@ -5486,65 +5987,101 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setIsTradeLogOpen(false)}
-                aria-label="売買ログを閉じる"
+                aria-label={isEnglish ? "Close trade log" : "売買ログを閉じる"}
               >
                 ×
               </button>
             </div>
 
             {currentBook.logs.length === 0 ? (
-              <div className="empty-trade-log">まだ約定履歴はありません</div>
+              <div className="empty-trade-log">
+                {isEnglish ? "No executed trades yet" : "まだ約定履歴はありません"}
+              </div>
             ) : (
               <div className="trade-log-list">
-                {currentBook.logs.map((log) => (
-                  <div className="trade-log-row" key={log.id}>
-                    <div>
-                      <strong>{orderActionLabel[log.action]}</strong>
-                      <span>
-                        {log.lots}玉・
-                        {formatQuantity(
-                          log.shares,
-                          selectedInstrument.unitLabel
-                        )}
-                      </span>
-                    </div>
-                    <div>
-                      <span>注文日</span>
-                      <strong>{log.orderedDate}</strong>
-                    </div>
-                    <div>
-                      <span>約定日</span>
-                      <strong>{log.executionDate}</strong>
-                    </div>
-                    <div>
-                      <span>約定価格</span>
-                      <strong>
-                        {formatCurrencyAmount(
-                          log.executionPrice,
-                          selectedInstrument.currency,
-                          false
-                        )}
-                      </strong>
-                    </div>
-                    <div>
-                      <span>確定損益</span>
-                      <strong
-                        className={
-                          log.realizedProfit === null
-                            ? "profit-neutral"
-                            : profitClassName(log.realizedProfit)
-                        }
-                      >
-                        {log.realizedProfit === null
-                          ? "-"
-                          : formatCurrencyAmount(
-                              log.realizedProfit,
-                              selectedInstrument.currency
+                {currentBook.logs.map((log) => {
+                  const relatedIds = getRelatedTradeLogIds(log);
+                  const activeLog = currentBook.logs.find(
+                    (item) => item.id === activeTradeLogId
+                  );
+                  const activeRelatedIds = activeLog
+                    ? getRelatedTradeLogIds(activeLog)
+                    : new Set<string>();
+                  const isActive = activeTradeLogId === log.id;
+                  const isRelated = activeRelatedIds.has(log.id);
+
+                  return (
+                    <div
+                      className={`trade-log-row ${
+                        isActive ? "is-active" : isRelated ? "is-related" : ""
+                      }`}
+                      key={log.id}
+                      onMouseEnter={() => setActiveTradeLogId(log.id)}
+                      onFocus={() => setActiveTradeLogId(log.id)}
+                      onClick={() => setActiveTradeLogId(log.id)}
+                    >
+                      <div className="trade-log-summary">
+                        <div>
+                          <strong>{orderActionLabel[log.action]}</strong>
+                          <span>
+                            {log.lots}{isEnglish ? " lots" : "玉"}・
+                            {formatQuantity(
+                              log.shares,
+                              selectedInstrument.unitLabel
                             )}
-                      </strong>
+                            {relatedIds.size > 0
+                              ? ` / ${ui.related} ${relatedIds.size}`
+                              : ""}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            deleteTradeLog(log.id);
+                          }}
+                        >
+                          {ui.delete}
+                        </button>
+                      </div>
+                      <div>
+                        <span>{ui.orderedDate}</span>
+                        <strong>{log.orderedDate}</strong>
+                      </div>
+                      <div>
+                        <span>{ui.executedDate}</span>
+                        <strong>{log.executionDate}</strong>
+                      </div>
+                      <div>
+                        <span>{ui.executionPrice}</span>
+                        <strong>
+                          {formatCurrencyAmount(
+                            log.executionPrice,
+                            selectedInstrument.currency,
+                            false
+                          )}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>{ui.realizedProfit}</span>
+                        <strong
+                          className={
+                            log.realizedProfit === null
+                              ? "profit-neutral"
+                              : profitClassName(log.realizedProfit)
+                          }
+                        >
+                          {log.realizedProfit === null
+                            ? "-"
+                            : formatCurrencyAmount(
+                                log.realizedProfit,
+                                selectedInstrument.currency
+                              )}
+                        </strong>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>
@@ -5560,7 +6097,7 @@ export default function App() {
           aria-label="売買パネルを開く"
         >
           <span className="panel-open-arrow">‹</span>
-          <span className="panel-open-label">売買練習</span>
+          <span className="panel-open-label">{ui.tradePractice}</span>
         </button>
       )}
     </div>
