@@ -625,6 +625,21 @@ async function loadUserCsvTextFromDatabase(path: string) {
   return csvText;
 }
 
+async function deleteUserCsvFromDatabase(path: string) {
+  const database = await openUserSymbolsDatabase();
+
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(
+      USER_SYMBOLS_STORE_NAME,
+      "readwrite"
+    );
+    transaction.objectStore(USER_SYMBOLS_STORE_NAME).delete(path);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  database.close();
+}
+
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -2004,10 +2019,20 @@ export default function App() {
   const selectedSavedCsvSymbol = savedCsvSymbols.find(
     (symbol) => symbol.path === selectedDataPath
   );
+  const selectedEditableCsvSymbol =
+    selectedTemporarySymbol ?? selectedSavedCsvSymbol;
   const [editingTemporarySymbolPath, setEditingTemporarySymbolPath] =
     useState("");
   const [temporarySymbolForm, setTemporarySymbolForm] =
     useState<TemporaryCsvSymbolForm | null>(null);
+  const editingTemporarySymbol = temporaryCsvSymbols.find(
+    (symbol) => symbol.path === editingTemporarySymbolPath
+  );
+  const editingSavedCsvSymbol = savedCsvSymbols.find(
+    (symbol) => symbol.path === editingTemporarySymbolPath
+  );
+  const editingCsvSymbol = editingTemporarySymbol ?? editingSavedCsvSymbol;
+  const isEditingSavedCsvSymbol = Boolean(editingSavedCsvSymbol);
   const selectedInstrument =
     selectedTemporarySymbol ??
     selectedSavedCsvSymbol ??
@@ -2100,6 +2125,7 @@ export default function App() {
     useState<BarCountMeasurement | null>(null);
   const [canNavigateForward, setCanNavigateForward] = useState(false);
   const [selectedDailyCandles, setSelectedDailyCandles] = useState<Candle[]>([]);
+  const [dataReloadVersion, setDataReloadVersion] = useState(0);
   const [tradingBooks, setTradingBooks] = useState<
     Record<string, TradingBook>
   >(() => loadTradingBooksFromStorage());
@@ -3390,6 +3416,7 @@ export default function App() {
     appearanceSettings,
     currentPaintMarks,
     rememberVisibleLogicalRange,
+    dataReloadVersion,
     selectedInstrument.priceDecimals,
   ]);
 
@@ -3658,9 +3685,7 @@ export default function App() {
   const saveTemporarySymbolForm = () => {
     if (!editingTemporarySymbolPath || !temporarySymbolForm) return;
 
-    const currentSymbol = temporaryCsvSymbols.find(
-      (symbol) => symbol.path === editingTemporarySymbolPath
-    );
+    const currentSymbol = editingCsvSymbol;
     if (!currentSymbol) {
       closeTemporarySymbolEditor();
       return;
@@ -3672,11 +3697,22 @@ export default function App() {
       temporarySymbolForm
     );
 
-    setTemporaryCsvSymbols((symbols) =>
-      symbols.map((symbol) =>
-        symbol.path === updatedSymbol.path ? updatedSymbol : symbol
-      )
-    );
+    if (isUserCsvPath(currentSymbol.path)) {
+      const savedSymbol = currentSymbol as SavedCsvSymbol;
+      setSavedCsvSymbols((symbols) =>
+        symbols.map((symbol) =>
+          symbol.path === updatedSymbol.path
+            ? { ...updatedSymbol, savedAt: savedSymbol.savedAt }
+            : symbol
+        )
+      );
+    } else {
+      setTemporaryCsvSymbols((symbols) =>
+        symbols.map((symbol) =>
+          symbol.path === updatedSymbol.path ? updatedSymbol : symbol
+        )
+      );
+    }
 
     if (selectedDataPath === updatedSymbol.path) {
       setSharesPerLot(updatedSymbol.defaultLotSize);
@@ -3684,8 +3720,8 @@ export default function App() {
 
     showOrderMessage(
       isEnglish
-        ? "Temporary symbol settings were updated"
-        : "一時銘柄の設定を更新しました"
+        ? "Symbol settings were updated"
+        : "銘柄設定を更新しました"
     );
     closeTemporarySymbolEditor();
   };
@@ -3765,6 +3801,114 @@ export default function App() {
       playEffect("error");
       showOrderMessage(
         isEnglish ? "Failed to save symbol" : "銘柄の保存に失敗しました"
+      );
+    }
+  };
+
+  const deleteEditingSavedCsvSymbol = async () => {
+    if (!editingSavedCsvSymbol) return;
+
+    const confirmed = window.confirm(
+      isEnglish
+        ? `Delete ${editingSavedCsvSymbol.code} ${editingSavedCsvSymbol.name}?`
+        : `${editingSavedCsvSymbol.code} ${editingSavedCsvSymbol.name}を削除しますか？`
+    );
+    if (!confirmed) return;
+
+    try {
+      await deleteUserCsvFromDatabase(editingSavedCsvSymbol.path);
+      dailyCandlesCacheRef.current.delete(editingSavedCsvSymbol.path);
+      csvTextCacheRef.current.delete(editingSavedCsvSymbol.path);
+      setSavedCsvSymbols((symbols) =>
+        symbols.filter((symbol) => symbol.path !== editingSavedCsvSymbol.path)
+      );
+      setTradingBooks((books) => {
+        const nextBooks = { ...books };
+        delete nextBooks[editingSavedCsvSymbol.path];
+        return nextBooks;
+      });
+      setPaintMarksByStock((marksByStock) => {
+        const nextMarksByStock = { ...marksByStock };
+        delete nextMarksByStock[editingSavedCsvSymbol.path];
+        return nextMarksByStock;
+      });
+      if (selectedDataPath === editingSavedCsvSymbol.path) {
+        switchDataPath(DATA_FILES[0], getInstrumentDefinition(DATA_FILES[0]));
+      }
+      closeTemporarySymbolEditor();
+      showOrderMessage(
+        isEnglish ? "Saved symbol was deleted" : "保存済み銘柄を削除しました"
+      );
+    } catch (error) {
+      console.error(error);
+      playEffect("error");
+      showOrderMessage(
+        isEnglish ? "Failed to delete symbol" : "銘柄の削除に失敗しました"
+      );
+    }
+  };
+
+  const reimportEditingSavedCsvSymbol = async (file: File | null) => {
+    if (!file || !editingSavedCsvSymbol || !temporarySymbolForm) return;
+
+    try {
+      const csvText = await file.text();
+      const candles = parseDailyCandles(csvText);
+      if (candles.length === 0) {
+        playEffect("error");
+        showOrderMessage(
+          isEnglish
+            ? "Could not read candles from the CSV"
+            : "CSVからローソク足を読み込めませんでした"
+        );
+        return;
+      }
+
+      const nextForm: TemporaryCsvSymbolForm = {
+        ...temporarySymbolForm,
+        priceDecimals: String(getPriceDecimalsFromCandles(candles)),
+      };
+      const updatedSymbol = normalizeTemporaryCsvSymbolForm(
+        editingSavedCsvSymbol.path,
+        file.name,
+        nextForm
+      );
+      const savedSymbol: SavedCsvSymbol = {
+        ...updatedSymbol,
+        savedAt: editingSavedCsvSymbol.savedAt,
+      };
+
+      await saveUserCsvToDatabase({
+        path: editingSavedCsvSymbol.path,
+        csvText,
+        savedAt: editingSavedCsvSymbol.savedAt,
+      });
+      dailyCandlesCacheRef.current.set(editingSavedCsvSymbol.path, candles);
+      csvTextCacheRef.current.set(editingSavedCsvSymbol.path, csvText);
+      setSavedCsvSymbols((symbols) =>
+        symbols.map((symbol) =>
+          symbol.path === editingSavedCsvSymbol.path ? savedSymbol : symbol
+        )
+      );
+      setTemporarySymbolForm(createTemporaryCsvSymbolForm(savedSymbol));
+
+      if (selectedDataPath === editingSavedCsvSymbol.path) {
+        setSharesPerLot(savedSymbol.defaultLotSize);
+        setSelectedDailyCandles([]);
+        setIsChartLoading(true);
+        setDataReloadVersion((version) => version + 1);
+      }
+
+      showOrderMessage(
+        isEnglish
+          ? `${file.name} was reimported`
+          : `${file.name}でCSVを差し替えました`
+      );
+    } catch (error) {
+      console.error(error);
+      playEffect("error");
+      showOrderMessage(
+        isEnglish ? "Failed to reimport CSV" : "CSVの差し替えに失敗しました"
       );
     }
   };
@@ -4829,21 +4973,21 @@ export default function App() {
             }}
           />
         </label>
-        {selectedTemporarySymbol && (
+        {selectedEditableCsvSymbol && (
           <button
             type="button"
             className="csv-icon-button"
             title={
               isEnglish
-                ? "Edit temporary symbol settings"
-                : "一時銘柄の設定を編集"
+                ? "Edit symbol settings"
+                : "銘柄設定を編集"
             }
             aria-label={
               isEnglish
-                ? "Edit temporary symbol settings"
-                : "一時銘柄の設定を編集"
+                ? "Edit symbol settings"
+                : "銘柄設定を編集"
             }
-            onClick={() => openTemporarySymbolEditor(selectedTemporarySymbol)}
+            onClick={() => openTemporarySymbolEditor(selectedEditableCsvSymbol)}
           >
             ⚙
           </button>
@@ -6443,7 +6587,15 @@ export default function App() {
           <form
             role="dialog"
             aria-modal="true"
-            aria-label={isEnglish ? "Temporary symbol settings" : "一時銘柄設定"}
+            aria-label={
+              isEditingSavedCsvSymbol
+                ? isEnglish
+                  ? "Saved symbol settings"
+                  : "保存済み銘柄設定"
+                : isEnglish
+                  ? "Temporary symbol settings"
+                  : "一時銘柄設定"
+            }
             onSubmit={(event) => {
               event.preventDefault();
               saveTemporarySymbolForm();
@@ -6470,7 +6622,13 @@ export default function App() {
             >
               <div>
                 <h2 style={{ margin: 0, fontSize: "20px" }}>
-                  {isEnglish ? "Temporary Symbol Settings" : "一時銘柄設定"}
+                  {isEditingSavedCsvSymbol
+                    ? isEnglish
+                      ? "Saved Symbol Settings"
+                      : "保存済み銘柄設定"
+                    : isEnglish
+                      ? "Temporary Symbol Settings"
+                      : "一時銘柄設定"}
                 </h2>
                 <p
                   style={{
@@ -6480,9 +6638,13 @@ export default function App() {
                     lineHeight: 1.5,
                   }}
                 >
-                  {isEnglish
-                    ? "These settings are kept only until the page is reloaded."
-                    : "この設定は一時読み込み用です。ページを再読み込みすると消えます。"}
+                  {isEditingSavedCsvSymbol
+                    ? isEnglish
+                      ? "Edit the saved symbol, replace its CSV, or remove it from the symbol list."
+                      : "保存済み銘柄の設定変更、CSV差し替え、銘柄一覧からの削除ができます。"
+                    : isEnglish
+                      ? "These settings are kept only until the page is reloaded."
+                      : "この設定は一時読み込み用です。ページを再読み込みすると消えます。"}
                 </p>
               </div>
               <button
@@ -6615,9 +6777,13 @@ export default function App() {
                   paddingTop: "12px",
                 }}
               >
-                {isEnglish
-                  ? "Temporary Apply is lost on reload. Use Save Symbol to keep it. Examples: Japanese stocks JPY / shares / 100 / 1, USDJPY JPY / USD / 1 / 1, futures USD / contracts / 1 / 1."
-                  : "一時適用はリロードすると消えます。残す場合は銘柄一覧に保存してください。例: 日本株は JPY / 株 / 100 / 1、ドル円は JPY / USD / 1 / 1、先物は USD / 枚 / 1 / 1。"}
+                {isEditingSavedCsvSymbol
+                  ? isEnglish
+                    ? "Update Settings keeps the symbol in the list. Replace CSV updates only the price data while keeping trading logs and chart notes for this symbol. Delete also removes this symbol's trading practice data and chart notes."
+                    : "設定更新は銘柄一覧に反映されます。CSV差し替えは売買練習データとチャートメモを残したまま価格データだけ更新します。削除すると、この銘柄の売買練習データとチャートメモも削除します。"
+                  : isEnglish
+                    ? "Temporary Apply is lost on reload. Use Save Symbol to keep it. Examples: Japanese stocks JPY / shares / 100 / 1, USDJPY JPY / USD / 1 / 1, futures USD / contracts / 1 / 1."
+                    : "一時適用はリロードすると消えます。残す場合は銘柄一覧に保存してください。例: 日本株は JPY / 株 / 100 / 1、ドル円は JPY / USD / 1 / 1、先物は USD / 枚 / 1 / 1。"}
               </div>
             </div>
 
@@ -6645,22 +6811,69 @@ export default function App() {
               >
                 {isEnglish ? "Cancel" : "キャンセル"}
               </button>
-              <button
-                type="button"
-                onClick={() => void saveTemporarySymbolAsUserSymbol()}
-                style={{
-                  minWidth: "150px",
-                  border: "1px solid #16a34a",
-                  borderRadius: "6px",
-                  backgroundColor: "#15803d",
-                  color: "#fff",
-                  padding: "9px 14px",
-                  cursor: "pointer",
-                  fontWeight: 700,
-                }}
-              >
-                {isEnglish ? "Save Symbol" : "保存して追加"}
-              </button>
+              {isEditingSavedCsvSymbol ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void deleteEditingSavedCsvSymbol()}
+                    style={{
+                      minWidth: "96px",
+                      border: "1px solid #991b1b",
+                      borderRadius: "6px",
+                      backgroundColor: "#7f1d1d",
+                      color: "#fff",
+                      padding: "9px 14px",
+                      cursor: "pointer",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {isEnglish ? "Delete" : "削除"}
+                  </button>
+                  <label
+                    style={{
+                      minWidth: "130px",
+                      border: "1px solid #475569",
+                      borderRadius: "6px",
+                      backgroundColor: "#1e293b",
+                      color: "#e5e7eb",
+                      padding: "9px 14px",
+                      cursor: "pointer",
+                      fontWeight: 700,
+                      textAlign: "center",
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    {isEnglish ? "Replace CSV" : "CSV差し替え"}
+                    <input
+                      type="file"
+                      accept=".csv,text/csv"
+                      onChange={(event) => {
+                        const file = event.currentTarget.files?.[0] ?? null;
+                        void reimportEditingSavedCsvSymbol(file);
+                        event.currentTarget.value = "";
+                      }}
+                      style={{ display: "none" }}
+                    />
+                  </label>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void saveTemporarySymbolAsUserSymbol()}
+                  style={{
+                    minWidth: "150px",
+                    border: "1px solid #16a34a",
+                    borderRadius: "6px",
+                    backgroundColor: "#15803d",
+                    color: "#fff",
+                    padding: "9px 14px",
+                    cursor: "pointer",
+                    fontWeight: 700,
+                  }}
+                >
+                  {isEnglish ? "Save Symbol" : "保存して追加"}
+                </button>
+              )}
               <button
                 type="submit"
                 style={{
@@ -6674,7 +6887,13 @@ export default function App() {
                   fontWeight: 700,
                 }}
               >
-                {isEnglish ? "Apply Temporarily" : "一時適用"}
+                {isEditingSavedCsvSymbol
+                  ? isEnglish
+                    ? "Update Settings"
+                    : "設定更新"
+                  : isEnglish
+                    ? "Apply Temporarily"
+                    : "一時適用"}
               </button>
             </div>
           </form>
