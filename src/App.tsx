@@ -12,7 +12,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import { DATA_FILES, getInstrumentDefinition } from "./data/defaultSymbols";
-import type { Candle, DisplayCandle } from "./types";
+import type { Candle, DisplayCandle, InstrumentDefinition } from "./types";
 import { parseDailyCandles } from "./utils/csv";
 
 declare global {
@@ -163,6 +163,20 @@ type ViewSettingsDraft = {
 type ChartViewState = {
   displayBarsByKey: Record<string, number>;
   anchorDateByKey: Record<string, string>;
+};
+type TemporaryCsvSymbol = InstrumentDefinition & {
+  code: string;
+  name: string;
+  fileName: string;
+};
+type TemporaryCsvSymbolForm = {
+  code: string;
+  name: string;
+  currency: string;
+  unitLabel: string;
+  defaultLotSize: string;
+  multiplier: string;
+  priceDecimals: string;
 };
 type OrderAction = "add-short" | "close-short" | "add-long" | "close-long";
 type PositionSide = "short" | "long";
@@ -1550,6 +1564,65 @@ function getStockInfoFromPath(path: string) {
   return { code, name };
 }
 
+function createTemporaryCsvPath(fileName: string) {
+  return `temp-csv:${Date.now()}:${fileName}`;
+}
+
+function getPriceDecimalsFromCandles(candles: Candle[]) {
+  const maxDecimals = candles.reduce((max, candle) => {
+    const values = [candle.open, candle.high, candle.low, candle.close];
+    const candleMax = values.reduce((valueMax, value) => {
+      const decimalText = String(value).split(".")[1] ?? "";
+      return Math.max(valueMax, decimalText.length);
+    }, 0);
+
+    return Math.max(max, candleMax);
+  }, 0);
+
+  return Math.min(5, Math.max(0, maxDecimals));
+}
+
+function createTemporaryCsvSymbolForm(
+  symbol: TemporaryCsvSymbol
+): TemporaryCsvSymbolForm {
+  return {
+    code: symbol.code,
+    name: symbol.name,
+    currency: symbol.currency,
+    unitLabel: symbol.unitLabel,
+    defaultLotSize: String(symbol.defaultLotSize),
+    multiplier: String(symbol.multiplier),
+    priceDecimals: String(symbol.priceDecimals),
+  };
+}
+
+function normalizeTemporaryCsvSymbolForm(
+  path: string,
+  fileName: string,
+  form: TemporaryCsvSymbolForm
+): TemporaryCsvSymbol {
+  const code = form.code.trim() || fileName.replace(/\.[^.]+$/, "");
+  const name = form.name.trim() || fileName;
+  const currency = (form.currency.trim() || "JPY").toUpperCase();
+  const defaultLotSize = clampNumber(Number(form.defaultLotSize), 0.000001, 1_000_000_000, 1);
+  const multiplier = clampNumber(Number(form.multiplier), 0.000001, 1_000_000_000, 1);
+  const priceDecimals = Math.round(
+    clampNumber(Number(form.priceDecimals), 0, 8, 0)
+  );
+
+  return {
+    path,
+    code,
+    name,
+    fileName,
+    currency,
+    unitLabel: form.unitLabel.trim(),
+    defaultLotSize,
+    multiplier,
+    priceDecimals,
+  };
+}
+
 const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
 
 function toLocalDate(dateText: string) {
@@ -1757,7 +1830,18 @@ export default function App() {
   const paintPracticeChartRangeRef = useRef<VisibleLogicalRange | null>(null);
   const preserveVisibleRangeTransitionRef = useRef(false);
   const [selectedDataPath, setSelectedDataPath] = useState<string>(DATA_FILES[0]);
-  const selectedInstrument = getInstrumentDefinition(selectedDataPath);
+  const [temporaryCsvSymbols, setTemporaryCsvSymbols] = useState<
+    TemporaryCsvSymbol[]
+  >([]);
+  const selectedTemporarySymbol = temporaryCsvSymbols.find(
+    (symbol) => symbol.path === selectedDataPath
+  );
+  const [editingTemporarySymbolPath, setEditingTemporarySymbolPath] =
+    useState("");
+  const [temporarySymbolForm, setTemporarySymbolForm] =
+    useState<TemporaryCsvSymbolForm | null>(null);
+  const selectedInstrument =
+    selectedTemporarySymbol ?? getInstrumentDefinition(selectedDataPath);
   const [currentDate, setCurrentDate] = useState("");
   const [currentOhlc, setCurrentOhlc] = useState<Candle | null>(null);
   const [dateInputValue, setDateInputValue] = useState("");
@@ -2002,6 +2086,20 @@ export default function App() {
             getChartViewStateKey(selectedDataPath, timeframe)
           ] ?? autoDisplayBars)
         : viewSettings.fixedDisplayBars;
+  const availableDataPaths = [
+    ...temporaryCsvSymbols.map((symbol) => symbol.path),
+    ...DATA_FILES,
+  ];
+  const getSymbolInfo = (path: string) => {
+    const temporarySymbol = temporaryCsvSymbols.find(
+      (symbol) => symbol.path === path
+    );
+    if (temporarySymbol) {
+      return { code: temporarySymbol.code, name: temporarySymbol.name };
+    }
+
+    return getStockInfoFromPath(path);
+  };
   const currentBook =
     tradingBooks[selectedDataPath] ?? createEmptyTradingBook();
   const currentPaintMarks = paintMarksByStock[selectedDataPath] ?? EMPTY_PAINT_MARKS;
@@ -2452,6 +2550,9 @@ export default function App() {
     const loadDailyCandles = async () => {
       const cachedCandles = dailyCandlesCacheRef.current.get(selectedDataPath);
       if (cachedCandles) return cachedCandles;
+      if (selectedDataPath.startsWith("temp-csv:")) {
+        throw new Error("Temporary CSV data was not found");
+      }
 
       const response = await fetch(selectedDataPath);
       if (!response.ok) {
@@ -3323,8 +3424,129 @@ export default function App() {
     setIsTradeLogOpen(false);
   };
 
+  const switchDataPath = (
+    nextDataPath: string,
+    instrument = temporaryCsvSymbols.find(
+      (symbol) => symbol.path === nextDataPath
+    ) ?? getInstrumentDefinition(nextDataPath)
+  ) => {
+    anchorDailyDateRef.current = null;
+    returnDailyDateRef.current = null;
+    upperTimeframeMovedRef.current = false;
+    ignoreNextRangeSyncRef.current = false;
+    timeframeSwitchSyncRef.current = false;
+    selectedChartDateRef.current = "";
+    setCurrentDate("");
+    setCurrentOhlc(null);
+    setDateInputValue("");
+    setSelectedChartDate("");
+    setTradingDates(new Set());
+    setSelectedDailyCandles([]);
+    barCountMeasurementRef.current = null;
+    setBarCountMeasurement(null);
+    showOrderMessage("");
+    setIsDatePickerOpen(false);
+    setIsChartLoading(true);
+    setSharesPerLot(instrument.defaultLotSize);
+    setSelectedDataPath(nextDataPath);
+  };
+
+  const openTemporarySymbolEditor = (symbol: TemporaryCsvSymbol) => {
+    setEditingTemporarySymbolPath(symbol.path);
+    setTemporarySymbolForm(createTemporaryCsvSymbolForm(symbol));
+  };
+
+  const closeTemporarySymbolEditor = useCallback(() => {
+    setEditingTemporarySymbolPath("");
+    setTemporarySymbolForm(null);
+  }, []);
+
+  const saveTemporarySymbolForm = () => {
+    if (!editingTemporarySymbolPath || !temporarySymbolForm) return;
+
+    const currentSymbol = temporaryCsvSymbols.find(
+      (symbol) => symbol.path === editingTemporarySymbolPath
+    );
+    if (!currentSymbol) {
+      closeTemporarySymbolEditor();
+      return;
+    }
+
+    const updatedSymbol = normalizeTemporaryCsvSymbolForm(
+      currentSymbol.path,
+      currentSymbol.fileName,
+      temporarySymbolForm
+    );
+
+    setTemporaryCsvSymbols((symbols) =>
+      symbols.map((symbol) =>
+        symbol.path === updatedSymbol.path ? updatedSymbol : symbol
+      )
+    );
+
+    if (selectedDataPath === updatedSymbol.path) {
+      setSharesPerLot(updatedSymbol.defaultLotSize);
+    }
+
+    showOrderMessage(
+      isEnglish
+        ? "Temporary symbol settings were updated"
+        : "一時銘柄の設定を更新しました"
+    );
+    closeTemporarySymbolEditor();
+  };
+
+  const importTemporaryCsv = async (file: File | null) => {
+    if (!file) return;
+
+    try {
+      const csvText = await file.text();
+      const candles = parseDailyCandles(csvText);
+      if (candles.length === 0) {
+        playEffect("error");
+        showOrderMessage(
+          isEnglish
+            ? "Could not read candles from the CSV"
+            : "CSVからローソク足を読み込めませんでした"
+        );
+        return;
+      }
+
+      const fileName = file.name;
+      const path = createTemporaryCsvPath(fileName);
+      const { code, name } = getStockInfoFromPath(fileName);
+      const temporarySymbol: TemporaryCsvSymbol = {
+        path,
+        code: code || fileName.replace(/\.[^.]+$/, ""),
+        name: name || (isEnglish ? "Temporary CSV" : "一時CSV"),
+        fileName,
+        currency: "JPY",
+        unitLabel: "",
+        defaultLotSize: 1,
+        multiplier: 1,
+        priceDecimals: getPriceDecimalsFromCandles(candles),
+      };
+
+      dailyCandlesCacheRef.current.set(path, candles);
+      setTemporaryCsvSymbols((symbols) => [temporarySymbol, ...symbols]);
+      switchDataPath(path, temporarySymbol);
+      openTemporarySymbolEditor(temporarySymbol);
+      showOrderMessage(
+        isEnglish
+          ? `${fileName} was loaded temporarily`
+          : `${fileName}を一時銘柄として読み込みました`
+      );
+    } catch (error) {
+      console.error(error);
+      playEffect("error");
+      showOrderMessage(
+        isEnglish ? "Failed to import CSV" : "CSVの読み込みに失敗しました"
+      );
+    }
+  };
+
   const exportTradeLogCsv = () => {
-    const stockInfo = getStockInfoFromPath(selectedDataPath);
+    const stockInfo = getSymbolInfo(selectedDataPath);
     const rows = [
       [
         "銘柄コード",
@@ -4012,7 +4234,7 @@ export default function App() {
   const downloadPaintPng = () => {
     const output = createPaintOutputCanvas();
     if (!output) return;
-    const stock = getStockInfoFromPath(selectedDataPath);
+    const stock = getSymbolInfo(selectedDataPath);
     const link = document.createElement("a");
     link.href = output.toDataURL("image/png");
     link.download = `${stock.code}_${stock.name}_${dateInputValue || "chart"}_paint.png`;
@@ -4023,7 +4245,7 @@ export default function App() {
 
   const saveCurrentPaintPractice = async () => {
     if (!paintBackgroundDataUrl) return;
-    const stock = getStockInfoFromPath(selectedDataPath);
+    const stock = getSymbolInfo(selectedDataPath);
     const item: SavedPaintPractice = {
       id: createId("paint-practice"),
       stockPath: selectedDataPath,
@@ -4195,12 +4417,14 @@ export default function App() {
         if (
           isPaintHistoryOpen ||
           isAppearanceSettingsOpen ||
+          editingTemporarySymbolPath ||
           isDatePickerOpen ||
           isPaintPracticeOpen
         ) {
           event.preventDefault();
           setIsPaintHistoryOpen(false);
           setIsAppearanceSettingsOpen(false);
+          closeTemporarySymbolEditor();
           setIsDatePickerOpen(false);
           if (isPaintPracticeOpen) {
             closePaintPractice();
@@ -4220,11 +4444,13 @@ export default function App() {
     isPaintCanvasActive,
     isPaintHistoryOpen,
     isAppearanceSettingsOpen,
+    editingTemporarySymbolPath,
     isDatePickerOpen,
     undoPaintDrawing,
     redoPaintDrawing,
     openPaintPractice,
     closePaintPractice,
+    closeTemporarySymbolEditor,
     changeTimeframe,
     toggleFullscreen,
   ]);
@@ -4289,27 +4515,7 @@ export default function App() {
             value={selectedDataPath}
             onChange={(event) => {
               const nextDataPath = event.target.value;
-              anchorDailyDateRef.current = null;
-              returnDailyDateRef.current = null;
-              upperTimeframeMovedRef.current = false;
-              ignoreNextRangeSyncRef.current = false;
-              timeframeSwitchSyncRef.current = false;
-              setCurrentDate("");
-              setCurrentOhlc(null);
-              setDateInputValue("");
-              selectedChartDateRef.current = "";
-              setSelectedChartDate("");
-              setTradingDates(new Set());
-              setSelectedDailyCandles([]);
-              barCountMeasurementRef.current = null;
-              setBarCountMeasurement(null);
-              showOrderMessage("");
-              setIsDatePickerOpen(false);
-              setIsChartLoading(true);
-              setSharesPerLot(
-                getInstrumentDefinition(nextDataPath).defaultLotSize
-              );
-              setSelectedDataPath(nextDataPath);
+              switchDataPath(nextDataPath);
               event.currentTarget.blur();
             }}
             style={{
@@ -4321,8 +4527,8 @@ export default function App() {
               fontSize: "14px",
             }}
           >
-            {DATA_FILES.map((path) => {
-              const info = getStockInfoFromPath(path);
+            {availableDataPaths.map((path) => {
+              const info = getSymbolInfo(path);
 
               return (
                 <option key={path} value={path}>
@@ -4332,6 +4538,42 @@ export default function App() {
             })}
           </select>
         </label>
+
+        <label
+          className="csv-icon-button"
+          title={isEnglish ? "Add symbol from CSV" : "CSVから銘柄追加"}
+          aria-label={isEnglish ? "Add symbol from CSV" : "CSVから銘柄追加"}
+        >
+          ＋
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0] ?? null;
+              void importTemporaryCsv(file);
+              event.currentTarget.value = "";
+            }}
+          />
+        </label>
+        {selectedTemporarySymbol && (
+          <button
+            type="button"
+            className="csv-icon-button"
+            title={
+              isEnglish
+                ? "Edit temporary symbol settings"
+                : "一時銘柄の設定を編集"
+            }
+            aria-label={
+              isEnglish
+                ? "Edit temporary symbol settings"
+                : "一時銘柄の設定を編集"
+            }
+            onClick={() => openTemporarySymbolEditor(selectedTemporarySymbol)}
+          >
+            ⚙
+          </button>
+        )}
         </div>
 
         <div
@@ -4928,8 +5170,8 @@ export default function App() {
               <div>
                 <strong>{ui.paintCanvas}</strong>
                 <span>
-                  {getStockInfoFromPath(selectedDataPath).code}{" "}
-                  {getStockInfoFromPath(selectedDataPath).name}・
+                  {getSymbolInfo(selectedDataPath).code}{" "}
+                  {getSymbolInfo(selectedDataPath).name}・
                   {dateInputValue
                     ? formatDateWithWeekday(dateInputValue)
                     : isEnglish
@@ -5903,6 +6145,249 @@ export default function App() {
           </button>
         </div>
       </aside>
+
+      {editingTemporarySymbolPath && temporarySymbolForm && (
+        <div
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeTemporarySymbolEditor();
+            }
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 31,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "rgba(2, 6, 23, 0.42)",
+            padding: "24px",
+            boxSizing: "border-box",
+          }}
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-label={isEnglish ? "Temporary symbol settings" : "一時銘柄設定"}
+            onSubmit={(event) => {
+              event.preventDefault();
+              saveTemporarySymbolForm();
+            }}
+            style={{
+              width: "min(560px, calc(100vw - 48px))",
+              border: "1px solid #334155",
+              borderRadius: "10px",
+              backgroundColor: "rgba(15, 23, 42, 0.96)",
+              color: "#e5e7eb",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.42)",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: "12px",
+                padding: "18px 20px 14px",
+                borderBottom: "1px solid #334155",
+              }}
+            >
+              <div>
+                <h2 style={{ margin: 0, fontSize: "20px" }}>
+                  {isEnglish ? "Temporary Symbol Settings" : "一時銘柄設定"}
+                </h2>
+                <p
+                  style={{
+                    margin: "6px 0 0",
+                    color: "#94a3b8",
+                    fontSize: "13px",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {isEnglish
+                    ? "These settings are kept only until the page is reloaded."
+                    : "この設定は一時読み込み用です。ページを再読み込みすると消えます。"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeTemporarySymbolEditor}
+                aria-label={isEnglish ? "Close" : "閉じる"}
+                style={{
+                  width: "34px",
+                  height: "34px",
+                  border: "1px solid #475569",
+                  borderRadius: "6px",
+                  background: "#111827",
+                  color: "#cbd5e1",
+                  cursor: "pointer",
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: "12px",
+                padding: "18px 20px",
+              }}
+            >
+              {[
+                {
+                  key: "code",
+                  label: isEnglish ? "Code" : "コード",
+                  type: "text",
+                },
+                {
+                  key: "name",
+                  label: isEnglish ? "Name" : "銘柄名",
+                  type: "text",
+                },
+                {
+                  key: "currency",
+                  label: isEnglish ? "Currency" : "通貨",
+                  type: "text",
+                },
+                {
+                  key: "unitLabel",
+                  label: isEnglish ? "Unit Label" : "単位",
+                  type: "text",
+                },
+                {
+                  key: "defaultLotSize",
+                  label: isEnglish ? "Quantity per Lot" : "1玉あたり数量",
+                  type: "number",
+                },
+                {
+                  key: "multiplier",
+                  label: isEnglish ? "Multiplier" : "倍率",
+                  type: "number",
+                },
+                {
+                  key: "priceDecimals",
+                  label: isEnglish ? "Price Decimals" : "価格小数桁",
+                  type: "number",
+                },
+              ].map((field) => (
+                <label
+                  key={field.key}
+                  style={{
+                    display: "grid",
+                    gap: "6px",
+                    color: "#cbd5e1",
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    gridColumn: field.key === "name" ? "span 1" : undefined,
+                  }}
+                >
+                  <span>{field.label}</span>
+                  <input
+                    type={field.type}
+                    value={
+                      temporarySymbolForm[
+                        field.key as keyof TemporaryCsvSymbolForm
+                      ]
+                    }
+                    min={
+                      field.key === "defaultLotSize" ||
+                      field.key === "multiplier"
+                        ? "0.000001"
+                        : field.key === "priceDecimals"
+                          ? "0"
+                          : undefined
+                    }
+                    max={field.key === "priceDecimals" ? "8" : undefined}
+                    step={
+                      field.key === "priceDecimals"
+                        ? "1"
+                        : field.type === "number"
+                          ? "any"
+                          : undefined
+                    }
+                    onChange={(event) => {
+                      const key = field.key as keyof TemporaryCsvSymbolForm;
+                      setTemporarySymbolForm((form) =>
+                        form ? { ...form, [key]: event.target.value } : form
+                      );
+                    }}
+                    style={{
+                      minWidth: 0,
+                      height: "36px",
+                      padding: "6px 9px",
+                      color: "#e5e7eb",
+                      background: "#111827",
+                      border: "1px solid #475569",
+                      borderRadius: "6px",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                </label>
+              ))}
+
+              <div
+                style={{
+                  gridColumn: "1 / -1",
+                  color: "#94a3b8",
+                  fontSize: "12px",
+                  lineHeight: 1.5,
+                  borderTop: "1px solid #334155",
+                  paddingTop: "12px",
+                }}
+              >
+                {isEnglish
+                  ? "Examples: Japanese stocks JPY / stocks / 100 / 1, USDJPY JPY / USD / 1 / 1, futures USD / contracts / 1 / 1."
+                  : "例: 日本株は JPY / 株 / 100 / 1、ドル円は JPY / USD / 1 / 1、先物は USD / 枚 / 1 / 1。"}
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "10px",
+                padding: "14px 20px 18px",
+                borderTop: "1px solid #334155",
+              }}
+            >
+              <button
+                type="button"
+                onClick={closeTemporarySymbolEditor}
+                style={{
+                  minWidth: "96px",
+                  border: "1px solid #475569",
+                  borderRadius: "6px",
+                  backgroundColor: "#111827",
+                  color: "#cbd5e1",
+                  padding: "9px 14px",
+                  cursor: "pointer",
+                }}
+              >
+                {isEnglish ? "Cancel" : "キャンセル"}
+              </button>
+              <button
+                type="submit"
+                style={{
+                  minWidth: "110px",
+                  border: "1px solid #2563eb",
+                  borderRadius: "6px",
+                  backgroundColor: "#2563eb",
+                  color: "#fff",
+                  padding: "9px 14px",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                }}
+              >
+                {isEnglish ? "Apply" : "適用"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {isAppearanceSettingsOpen && (
         <div
@@ -7216,8 +7701,8 @@ export default function App() {
               <div>
                 <h2>{ui.tradeLog}</h2>
                 <span>
-                  {getStockInfoFromPath(selectedDataPath).code}{" "}
-                  {getStockInfoFromPath(selectedDataPath).name} / {ui.tradeScore}
+                  {getSymbolInfo(selectedDataPath).code}{" "}
+                  {getSymbolInfo(selectedDataPath).name} / {ui.tradeScore}
                   : {ui.win} {tradeOutcomeCounts.win} - {ui.loss}{" "}
                   {tradeOutcomeCounts.loss} - {ui.draw}{" "}
                   {tradeOutcomeCounts.draw}

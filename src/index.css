@@ -144,6 +144,32 @@ button {
   cursor: pointer;
 }
 
+.csv-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+  color: var(--text);
+  background: var(--panel-muted);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.csv-icon-button:hover {
+  border-color: var(--blue);
+}
+
+.csv-icon-button input {
+  display: none;
+}
+
 .timeframe-row {
   justify-content: flex-start !important;
   flex-wrap: nowrap !important;
@@ -2189,6 +2215,12 @@ button {
     min-height: 28px !important;
     padding: 3px 28px 3px 8px !important;
     font-size: 12px !important;
+  }
+
+  .csv-icon-button {
+    width: 28px;
+    min-height: 28px;
+    font-size: 15px;
   }
 
   .toolbar-group {
