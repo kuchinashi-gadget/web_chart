@@ -25,6 +25,7 @@ const MAX_AUTO_DISPLAY_BARS = 320;
 const WHEEL_NAVIGATION_THRESHOLD = 40;
 const TRADING_BOOKS_STORAGE_KEY = "stock-practice-trading-books-v1";
 const CHART_SETTINGS_STORAGE_KEY = "stock-practice-chart-settings-v1";
+const CHART_VIEW_STATE_STORAGE_KEY = "stock-practice-chart-view-state-v1";
 const SOUND_ENABLED_STORAGE_KEY = "stock-practice-sound-enabled-v1";
 const PAINT_MARKS_STORAGE_KEY = "stock-practice-paint-marks-v1";
 const PAINT_CUSTOM_COLORS_STORAGE_KEY = "stock-practice-paint-custom-colors-v1";
@@ -34,8 +35,10 @@ const PAINT_PRACTICE_STORE_NAME = "paint-practices";
 
 type Timeframe = "daily" | "weekly" | "monthly";
 type VisibleLogicalRange = { from: number; to: number };
-type DisplayBarsOption = "auto" | "50" | "75" | "100" | "150" | "200";
-type SettingsTab = "ma" | "appearance" | "trading";
+type DisplayBarsOption = "auto" | "remember" | "50" | "75" | "100" | "150" | "200";
+type DisplayBarsMode = "auto" | "remember" | "fixed";
+type InitialPositionMode = "latest" | "offset" | "remember" | "earliest";
+type SettingsTab = "ma" | "appearance" | "trading" | "view";
 type ExecutionTiming = "next-open" | "same-close";
 type AppLanguage = "ja" | "en";
 type ChartTheme = "dark" | "dark-blue" | "black" | "light" | "light-gray" | "ivory";
@@ -119,6 +122,16 @@ type ChartAppearanceDraft = {
 };
 type TradingSettingsDraft = {
   executionTiming: ExecutionTiming;
+};
+type ViewSettingsDraft = {
+  displayBarsMode: DisplayBarsMode;
+  fixedDisplayBars: number;
+  initialPositionMode: InitialPositionMode;
+  initialPositionOffsetBars: number;
+};
+type ChartViewState = {
+  displayBarsByKey: Record<string, number>;
+  anchorDateByKey: Record<string, string>;
 };
 type OrderAction = "add-short" | "close-short" | "add-long" | "close-long";
 type PositionSide = "short" | "long";
@@ -769,6 +782,18 @@ const DEFAULT_TRADING_SETTINGS_DRAFT: TradingSettingsDraft = {
   executionTiming: "next-open",
 };
 
+const DEFAULT_VIEW_SETTINGS_DRAFT: ViewSettingsDraft = {
+  displayBarsMode: "auto",
+  fixedDisplayBars: 100,
+  initialPositionMode: "latest",
+  initialPositionOffsetBars: 100,
+};
+
+const DEFAULT_CHART_VIEW_STATE: ChartViewState = {
+  displayBarsByKey: {},
+  anchorDateByKey: {},
+};
+
 const chartThemeLabels: Record<ChartTheme, string> = {
   dark: "ダーク",
   "dark-blue": "ダークブルー",
@@ -899,6 +924,7 @@ type StoredChartSettings = {
   maSettings: MaDisplaySetting[];
   appearanceSettings: ChartAppearanceDraft;
   tradingSettings: TradingSettingsDraft;
+  viewSettings: ViewSettingsDraft;
   language: AppLanguage;
 };
 
@@ -1003,12 +1029,42 @@ function normalizeTradingSettingsDraft(value: unknown): TradingSettingsDraft {
   };
 }
 
+function normalizeViewSettingsDraft(value: unknown): ViewSettingsDraft {
+  if (!value || typeof value !== "object") {
+    return DEFAULT_VIEW_SETTINGS_DRAFT;
+  }
+
+  const item = value as Partial<ViewSettingsDraft>;
+  const displayBarsMode: DisplayBarsMode =
+    item.displayBarsMode === "remember" || item.displayBarsMode === "fixed"
+      ? item.displayBarsMode
+      : "auto";
+  const initialPositionMode: InitialPositionMode =
+    item.initialPositionMode === "offset" ||
+    item.initialPositionMode === "remember" ||
+    item.initialPositionMode === "earliest"
+      ? item.initialPositionMode
+      : "latest";
+
+  return {
+    displayBarsMode,
+    fixedDisplayBars: Math.round(
+      clampNumber(item.fixedDisplayBars, 30, MAX_AUTO_DISPLAY_BARS, 100)
+    ),
+    initialPositionMode,
+    initialPositionOffsetBars: Math.round(
+      clampNumber(item.initialPositionOffsetBars, 0, 5000, 100)
+    ),
+  };
+}
+
 function loadChartSettingsFromStorage(): StoredChartSettings {
   if (typeof window === "undefined") {
     return {
       maSettings: DEFAULT_MA_DISPLAY_SETTINGS,
       appearanceSettings: DEFAULT_CHART_APPEARANCE_DRAFT,
       tradingSettings: DEFAULT_TRADING_SETTINGS_DRAFT,
+      viewSettings: DEFAULT_VIEW_SETTINGS_DRAFT,
       language: "ja",
     };
   }
@@ -1020,6 +1076,7 @@ function loadChartSettingsFromStorage(): StoredChartSettings {
         maSettings: DEFAULT_MA_DISPLAY_SETTINGS,
         appearanceSettings: DEFAULT_CHART_APPEARANCE_DRAFT,
         tradingSettings: DEFAULT_TRADING_SETTINGS_DRAFT,
+        viewSettings: DEFAULT_VIEW_SETTINGS_DRAFT,
         language: "ja",
       };
     }
@@ -1037,6 +1094,7 @@ function loadChartSettingsFromStorage(): StoredChartSettings {
         parsed.appearanceSettings
       ),
       tradingSettings: normalizeTradingSettingsDraft(parsed.tradingSettings),
+      viewSettings: normalizeViewSettingsDraft(parsed.viewSettings),
       language: normalizeLanguage(parsed.language),
     };
   } catch (error) {
@@ -1046,6 +1104,7 @@ function loadChartSettingsFromStorage(): StoredChartSettings {
       maSettings: DEFAULT_MA_DISPLAY_SETTINGS,
       appearanceSettings: DEFAULT_CHART_APPEARANCE_DRAFT,
       tradingSettings: DEFAULT_TRADING_SETTINGS_DRAFT,
+      viewSettings: DEFAULT_VIEW_SETTINGS_DRAFT,
       language: "ja",
     };
   }
@@ -1060,6 +1119,89 @@ function saveChartSettingsToStorage(settings: StoredChartSettings) {
   } catch (error) {
     console.warn("Failed to save chart settings", error);
   }
+}
+
+function loadChartViewStateFromStorage(): ChartViewState {
+  if (typeof window === "undefined") return DEFAULT_CHART_VIEW_STATE;
+
+  try {
+    const raw = window.localStorage.getItem(CHART_VIEW_STATE_STORAGE_KEY);
+    if (!raw) return DEFAULT_CHART_VIEW_STATE;
+
+    const parsed = JSON.parse(raw) as Partial<ChartViewState>;
+    const displayBarsByKey =
+      parsed.displayBarsByKey && typeof parsed.displayBarsByKey === "object"
+        ? Object.fromEntries(
+            Object.entries(parsed.displayBarsByKey)
+              .map(([key, value]) => [
+                key,
+                Math.round(clampNumber(value, 1, MAX_AUTO_DISPLAY_BARS, 100)),
+              ])
+              .filter(([key]) => typeof key === "string" && key.length > 0)
+          )
+        : {};
+    const anchorDateByKey =
+      parsed.anchorDateByKey && typeof parsed.anchorDateByKey === "object"
+        ? Object.fromEntries(
+            Object.entries(parsed.anchorDateByKey).filter(
+              ([key, value]) =>
+                typeof key === "string" &&
+                key.length > 0 &&
+                typeof value === "string" &&
+                /^\d{4}-\d{2}-\d{2}$/.test(value)
+            )
+          )
+        : {};
+
+    return { displayBarsByKey, anchorDateByKey };
+  } catch (error) {
+    console.warn("Failed to load chart view state", error);
+    return DEFAULT_CHART_VIEW_STATE;
+  }
+}
+
+function saveChartViewStateToStorage(state: ChartViewState) {
+  try {
+    window.localStorage.setItem(
+      CHART_VIEW_STATE_STORAGE_KEY,
+      JSON.stringify(state)
+    );
+  } catch (error) {
+    console.warn("Failed to save chart view state", error);
+  }
+}
+
+function getChartViewStateKey(dataPath: string, timeframe: Timeframe) {
+  return `${dataPath}::${timeframe}`;
+}
+
+function pickInitialAnchorDate(
+  candles: Candle[],
+  displayBars: number,
+  settings: ViewSettingsDraft,
+  rememberedAnchorDate?: string
+) {
+  if (candles.length === 0) return "";
+
+  if (settings.initialPositionMode === "remember" && rememberedAnchorDate) {
+    return rememberedAnchorDate;
+  }
+
+  if (settings.initialPositionMode === "earliest") {
+    return candles[Math.min(candles.length - 1, Math.max(0, displayBars - 1))]
+      ?.time ?? "";
+  }
+
+  if (settings.initialPositionMode === "offset") {
+    const index = Math.max(
+      0,
+      candles.length - 1 - settings.initialPositionOffsetBars
+    );
+
+    return candles[index]?.time ?? candles[candles.length - 1]?.time ?? "";
+  }
+
+  return candles[candles.length - 1]?.time ?? "";
 }
 
 function isLightChartTheme(theme: ChartTheme) {
@@ -1276,6 +1418,7 @@ function LineStylePreview({
 
 const displayBarsOptions: Array<{ value: DisplayBarsOption; label: string }> = [
   { value: "auto", label: "自動" },
+  { value: "remember", label: "前回" },
   { value: "50", label: "50本" },
   { value: "75", label: "75本" },
   { value: "100", label: "100本" },
@@ -1508,8 +1651,25 @@ export default function App() {
   const [isChartLoading, setIsChartLoading] = useState(false);
   const [timeframe, setTimeframe] = useState<Timeframe>("daily");
   const [displayBarsOption, setDisplayBarsOption] =
-    useState<DisplayBarsOption>("auto");
+    useState<DisplayBarsOption>(() => {
+      const savedViewSettings = loadChartSettingsFromStorage().viewSettings;
+      if (savedViewSettings.displayBarsMode === "remember") return "remember";
+      if (savedViewSettings.displayBarsMode === "fixed") {
+        const fixedValue = String(
+          savedViewSettings.fixedDisplayBars
+        ) as DisplayBarsOption;
+        return displayBarsOptions.some((option) => option.value === fixedValue)
+          ? fixedValue
+          : "100";
+      }
+
+      return "auto";
+    });
   const [autoDisplayBars, setAutoDisplayBars] = useState(100);
+  const [chartViewState, setChartViewState] = useState<ChartViewState>(
+    loadChartViewStateFromStorage
+  );
+  const chartViewStateRef = useRef(chartViewState);
   const [visibleBarsCount, setVisibleBarsCount] = useState(0);
   const [orderAction, setOrderAction] = useState<OrderAction>("add-short");
   const [orderLots, setOrderLots] = useState(1);
@@ -1577,6 +1737,9 @@ export default function App() {
     useState<TradingSettingsDraft>(
       () => loadChartSettingsFromStorage().tradingSettings
     );
+  const [viewSettings, setViewSettings] = useState<ViewSettingsDraft>(
+    () => loadChartSettingsFromStorage().viewSettings
+  );
   const [language, setLanguage] = useState<AppLanguage>(
     () => loadChartSettingsFromStorage().language
   );
@@ -1692,7 +1855,13 @@ export default function App() {
     eraser: isEnglish ? "Eraser" : "消しゴム",
   };
   const displayBars =
-    displayBarsOption === "auto" ? autoDisplayBars : Number(displayBarsOption);
+    viewSettings.displayBarsMode === "auto"
+      ? autoDisplayBars
+      : viewSettings.displayBarsMode === "remember"
+        ? (chartViewState.displayBarsByKey[
+            getChartViewStateKey(selectedDataPath, timeframe)
+          ] ?? autoDisplayBars)
+        : viewSettings.fixedDisplayBars;
   const currentBook =
     tradingBooks[selectedDataPath] ?? createEmptyTradingBook();
   const currentPaintMarks = paintMarksByStock[selectedDataPath] ?? EMPTY_PAINT_MARKS;
@@ -1793,6 +1962,11 @@ export default function App() {
   useEffect(() => {
     savePaintMarksToStorage(paintMarksByStock);
   }, [paintMarksByStock]);
+
+  useEffect(() => {
+    chartViewStateRef.current = chartViewState;
+    saveChartViewStateToStorage(chartViewState);
+  }, [chartViewState]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -2133,8 +2307,14 @@ export default function App() {
 
         setSelectedDailyCandles(dailyCandles);
         if (!anchorDailyDateRef.current) {
-          anchorDailyDateRef.current =
-            dailyCandles[dailyCandles.length - 1]?.time ?? "";
+          anchorDailyDateRef.current = pickInitialAnchorDate(
+            dailyCandles,
+            displayBars,
+            viewSettings,
+            chartViewStateRef.current.anchorDateByKey[
+              getChartViewStateKey(selectedDataPath, timeframe)
+            ]
+          );
         }
         setTradingDates(new Set(dailyCandles.map((candle) => candle.time)));
         setCalendarRange({
@@ -2250,8 +2430,42 @@ export default function App() {
             dailyCandles
           );
           setDateInputValue(anchorDate);
+          const selectedDate = selectedChartDateRef.current;
+          if (selectedDate) {
+            const firstVisibleCandle = allCandles[startIndex];
+            const lastVisibleCandle = allCandles[endIndex - 1];
+            const firstVisibleDate =
+              firstVisibleCandle?.sourceStartTime ?? firstVisibleCandle?.time;
+            const lastVisibleDate =
+              lastVisibleCandle?.sourceEndTime ?? lastVisibleCandle?.time;
+            let nextSelectedDate = selectedDate;
+
+            if (firstVisibleDate && selectedDate < firstVisibleDate) {
+              nextSelectedDate = firstVisibleDate;
+            } else if (lastVisibleDate && selectedDate > lastVisibleDate) {
+              nextSelectedDate = lastVisibleDate;
+            }
+
+            if (nextSelectedDate !== selectedDate) {
+              selectedChartDateRef.current = nextSelectedDate;
+              setSelectedChartDate(nextSelectedDate);
+            }
+          }
           if (anchorDate) {
             setCalendarMonth(anchorDate.slice(0, 7));
+          }
+          if (anchorDate) {
+            const viewStateKey = getChartViewStateKey(selectedDataPath, timeframe);
+            setChartViewState((state) => ({
+              displayBarsByKey: {
+                ...state.displayBarsByKey,
+                [viewStateKey]: Math.max(1, endIndex - startIndex),
+              },
+              anchorDateByKey: {
+                ...state.anchorDateByKey,
+                [viewStateKey]: anchorDate,
+              },
+            }));
           }
           window.requestAnimationFrame(() => {
             if (!isDisposed) {
@@ -2279,8 +2493,51 @@ export default function App() {
           if (anchorDate) {
             setCalendarMonth(anchorDate.slice(0, 7));
           }
+          if (anchorDate) {
+            const viewStateKey = getChartViewStateKey(selectedDataPath, timeframe);
+            setChartViewState((state) => ({
+              ...state,
+              anchorDateByKey: {
+                ...state.anchorDateByKey,
+                [viewStateKey]: anchorDate,
+              },
+            }));
+          }
           setCanNavigateForward(rightIndex < allCandles.length - 1);
           processPendingOrderRef.current?.(anchorDate, dailyCandles);
+        };
+
+        const syncSelectedDateIntoVisibleRange = (
+          range: VisibleLogicalRange | null
+        ) => {
+          const selectedDate = selectedChartDateRef.current;
+          if (!range || !selectedDate) return;
+
+          const firstIndex = Math.max(0, Math.ceil(range.from));
+          const lastIndex = Math.min(
+            endIndex - 1,
+            Math.max(0, Math.floor(range.to))
+          );
+          const firstVisibleCandle = allCandles[firstIndex];
+          const lastVisibleCandle = allCandles[lastIndex];
+          if (!firstVisibleCandle || !lastVisibleCandle) return;
+
+          const firstVisibleDate =
+            firstVisibleCandle.sourceStartTime ?? firstVisibleCandle.time;
+          const lastVisibleDate =
+            lastVisibleCandle.sourceEndTime ?? lastVisibleCandle.time;
+          let nextSelectedDate = selectedDate;
+
+          if (selectedDate < firstVisibleDate) {
+            nextSelectedDate = firstVisibleDate;
+          } else if (selectedDate > lastVisibleDate) {
+            nextSelectedDate = lastVisibleDate;
+          }
+
+          if (nextSelectedDate !== selectedDate) {
+            selectedChartDateRef.current = nextSelectedDate;
+            setSelectedChartDate(nextSelectedDate);
+          }
         };
 
         const updateVisibleBarsCount = (
@@ -2331,6 +2588,7 @@ export default function App() {
 
           rememberVisibleLogicalRange(clampedRange);
           syncVisibleRightEdge(clampedRange);
+          syncSelectedDateIntoVisibleRange(clampedRange);
           if (
             !shouldIgnoreRangeSync &&
             !isTimeframeSwitchSync &&
@@ -2347,6 +2605,16 @@ export default function App() {
           );
           const count = Math.max(0, lastIndex - firstIndex + 1);
           setVisibleBarsCount((current) => (current === count ? current : count));
+          if (count > 0) {
+            const viewStateKey = getChartViewStateKey(selectedDataPath, timeframe);
+            setChartViewState((state) => ({
+              ...state,
+              displayBarsByKey: {
+                ...state.displayBarsByKey,
+                [viewStateKey]: count,
+              },
+            }));
+          }
         };
         chart
           .timeScale()
@@ -2502,7 +2770,7 @@ export default function App() {
         return;
       }
 
-      if (displayBarsOption !== "auto") return;
+      if (viewSettings.displayBarsMode === "fixed") return;
 
       const direction = event.deltaY > 0 ? 1 : -1;
       setIsChartLoading(true);
@@ -2545,7 +2813,7 @@ export default function App() {
     selectedDataPath,
     timeframe,
     displayBars,
-    displayBarsOption,
+    viewSettings,
     maDisplaySettings,
     appearanceSettings,
     currentPaintMarks,
@@ -2893,6 +3161,8 @@ export default function App() {
     setMaDisplaySettings(DEFAULT_MA_DISPLAY_SETTINGS);
     setAppearanceSettings(DEFAULT_CHART_APPEARANCE_DRAFT);
     setTradingSettings(DEFAULT_TRADING_SETTINGS_DRAFT);
+    setViewSettings(DEFAULT_VIEW_SETTINGS_DRAFT);
+    setDisplayBarsOption("auto");
   };
 
   const updateMaDisplaySetting = (
@@ -3658,8 +3928,23 @@ export default function App() {
             className="display-bars-select"
             value={displayBarsOption}
             onChange={(event) => {
+              const nextValue = event.target.value as DisplayBarsOption;
               setIsChartLoading(true);
-              setDisplayBarsOption(event.target.value as DisplayBarsOption);
+              setDisplayBarsOption(nextValue);
+              setViewSettings((settings) => {
+                if (nextValue === "auto") {
+                  return { ...settings, displayBarsMode: "auto" };
+                }
+                if (nextValue === "remember") {
+                  return { ...settings, displayBarsMode: "remember" };
+                }
+
+                return {
+                  ...settings,
+                  displayBarsMode: "fixed",
+                  fixedDisplayBars: Number(nextValue),
+                };
+              });
               event.currentTarget.blur();
             }}
             onKeyDown={(event) => {
@@ -3686,7 +3971,11 @@ export default function App() {
               <option key={option.value} value={option.value}>
                   {option.value === "auto"
                     ? ui.autoBars
-                    : `${option.value}${ui.barsSuffix}`}
+                    : option.value === "remember"
+                      ? isEnglish
+                        ? "Last"
+                        : "前回"
+                      : `${option.value}${ui.barsSuffix}`}
               </option>
             ))}
           </select>
@@ -4096,14 +4385,6 @@ export default function App() {
             height: "100%",
           }}
         />
-
-        <div className="timeframe-watermark" aria-hidden="true">
-          {timeframe === "daily"
-            ? ui.daily
-            : timeframe === "weekly"
-              ? ui.weekly
-              : ui.monthly}
-        </div>
 
         {isPaintPracticeOpen && isPaintCanvasActive && (
           <div className="paint-canvas-workspace">
@@ -5113,6 +5394,7 @@ export default function App() {
                   setMaDisplaySettings(savedSettings.maSettings);
                   setAppearanceSettings(savedSettings.appearanceSettings);
                   setTradingSettings(savedSettings.tradingSettings);
+                  setViewSettings(savedSettings.viewSettings);
                   setLanguage(savedSettings.language);
                   setIsAppearanceSettingsOpen(false);
                 }}
@@ -5136,7 +5418,7 @@ export default function App() {
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "1fr 1fr 1fr",
+                  gridTemplateColumns: "1fr 1fr 1fr 1fr",
                   gap: "8px",
                   marginBottom: "16px",
                 }}
@@ -5144,6 +5426,10 @@ export default function App() {
                 {(
                   [
                     { value: "ma", label: ui.movingAverages },
+                    {
+                      value: "view",
+                      label: isEnglish ? "Display" : "表示",
+                    },
                     { value: "appearance", label: ui.chartAppearance },
                     { value: "trading", label: ui.tradeSettings },
                   ] as Array<{ value: SettingsTab; label: string }>
@@ -5495,6 +5781,285 @@ export default function App() {
                           </svg>
                         ))}
                       </div>
+                    </div>
+                  </div>
+                </div>
+              ) : settingsTab === "view" ? (
+                <div
+                  style={{
+                    border: "1px solid #334155",
+                    borderRadius: "8px",
+                    overflow: "hidden",
+                    backgroundColor: "rgba(15, 23, 42, 0.72)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "180px 1fr",
+                      alignItems: "start",
+                      gap: "12px",
+                      padding: "14px",
+                      borderBottom: "1px solid #334155",
+                    }}
+                  >
+                    <strong>
+                      {isEnglish ? "Bars on Display" : "表示本数"}
+                    </strong>
+                    <div style={{ display: "grid", gap: "10px" }}>
+                      {(
+                        [
+                          {
+                            value: "auto",
+                            label: isEnglish ? "Always Auto" : "毎回自動",
+                            description: isEnglish
+                              ? "Choose a suitable number of bars from the current chart width."
+                              : "画面幅から毎回ちょうどよい本数を自動で決めます。",
+                          },
+                          {
+                            value: "remember",
+                            label: isEnglish ? "Use Last Count" : "前回を引き継ぐ",
+                            description: isEnglish
+                              ? "Reuse the last visible bar count for each symbol and timeframe."
+                              : "銘柄と足種ごとに、前回表示していた本数を引き継ぎます。",
+                          },
+                          {
+                            value: "fixed",
+                            label: isEnglish ? "Fixed Count" : "固定本数",
+                            description: isEnglish
+                              ? "Always start from the fixed bar count below."
+                              : "下で指定した本数を常に使います。",
+                          },
+                        ] as Array<{
+                          value: DisplayBarsMode;
+                          label: string;
+                          description: string;
+                        }>
+                      ).map((option) => {
+                        const isActive =
+                          viewSettings.displayBarsMode === option.value;
+
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => {
+                              setIsChartLoading(true);
+                              setViewSettings((settings) => ({
+                                ...settings,
+                                displayBarsMode: option.value,
+                              }));
+                              setDisplayBarsOption(
+                                option.value === "auto"
+                                  ? "auto"
+                                  : option.value === "remember"
+                                    ? "remember"
+                                    : (String(
+                                        viewSettings.fixedDisplayBars
+                                      ) as DisplayBarsOption)
+                              );
+                            }}
+                            style={{
+                              display: "grid",
+                              gap: "4px",
+                              border: isActive
+                                ? "1px solid #60a5fa"
+                                : "1px solid #475569",
+                              borderRadius: "7px",
+                              backgroundColor: isActive ? "#1d4ed8" : "#111827",
+                              color: "#f8fafc",
+                              padding: "10px 12px",
+                              cursor: "pointer",
+                              textAlign: "left",
+                            }}
+                          >
+                            <span style={{ fontWeight: 700 }}>
+                              {option.label}
+                            </span>
+                            <span style={{ color: "#cbd5e1", fontSize: "12px" }}>
+                              {option.description}
+                            </span>
+                          </button>
+                        );
+                      })}
+                      <label
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "8px",
+                          color: "#cbd5e1",
+                          fontSize: "13px",
+                        }}
+                      >
+                        <span>
+                          {isEnglish ? "Fixed bars" : "固定本数"}
+                        </span>
+                        <select
+                          value={String(viewSettings.fixedDisplayBars)}
+                          onChange={(event) => {
+                            const fixedDisplayBars = Number(event.target.value);
+                            setIsChartLoading(true);
+                            setViewSettings((settings) => ({
+                              ...settings,
+                              displayBarsMode: "fixed",
+                              fixedDisplayBars,
+                            }));
+                            setDisplayBarsOption(
+                              event.target.value as DisplayBarsOption
+                            );
+                          }}
+                          style={{
+                            border: "1px solid #475569",
+                            borderRadius: "6px",
+                            backgroundColor: "#111827",
+                            color: "#f8fafc",
+                            padding: "7px 8px",
+                          }}
+                        >
+                          {["50", "75", "100", "150", "200"].map((value) => (
+                            <option key={value} value={value}>
+                              {value}
+                              {ui.barsSuffix}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "180px 1fr",
+                      alignItems: "start",
+                      gap: "12px",
+                      padding: "14px",
+                    }}
+                  >
+                    <strong>
+                      {isEnglish ? "Initial Position" : "初期表示位置"}
+                    </strong>
+                    <div style={{ display: "grid", gap: "10px" }}>
+                      {(
+                        [
+                          {
+                            value: "latest",
+                            label: isEnglish ? "Latest" : "最新",
+                            description: isEnglish
+                              ? "Open at the latest available data."
+                              : "データの一番新しい位置で開きます。",
+                          },
+                          {
+                            value: "offset",
+                            label: isEnglish
+                              ? "N bars before latest"
+                              : "最新からN本前",
+                            description: isEnglish
+                              ? "Open a little before the latest data for practice."
+                              : "練習しやすいように、最新より少し前で開きます。",
+                          },
+                          {
+                            value: "remember",
+                            label: isEnglish
+                              ? "Continue from last"
+                              : "前回の続き",
+                            description: isEnglish
+                              ? "Open at the last right-edge date for each symbol and timeframe."
+                              : "銘柄と足種ごとに、前回の右端日付から再開します。",
+                          },
+                          {
+                            value: "earliest",
+                            label: isEnglish ? "Near beginning" : "最初の方",
+                            description: isEnglish
+                              ? "Open near the beginning of the data."
+                              : "データの最初の方から開きます。",
+                          },
+                        ] as Array<{
+                          value: InitialPositionMode;
+                          label: string;
+                          description: string;
+                        }>
+                      ).map((option) => {
+                        const isActive =
+                          viewSettings.initialPositionMode === option.value;
+
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => {
+                              anchorDailyDateRef.current = null;
+                              visibleLogicalRangeRef.current = null;
+                              setIsChartLoading(true);
+                              setViewSettings((settings) => ({
+                                ...settings,
+                                initialPositionMode: option.value,
+                              }));
+                            }}
+                            style={{
+                              display: "grid",
+                              gap: "4px",
+                              border: isActive
+                                ? "1px solid #60a5fa"
+                                : "1px solid #475569",
+                              borderRadius: "7px",
+                              backgroundColor: isActive ? "#1d4ed8" : "#111827",
+                              color: "#f8fafc",
+                              padding: "10px 12px",
+                              cursor: "pointer",
+                              textAlign: "left",
+                            }}
+                          >
+                            <span style={{ fontWeight: 700 }}>
+                              {option.label}
+                            </span>
+                            <span style={{ color: "#cbd5e1", fontSize: "12px" }}>
+                              {option.description}
+                            </span>
+                          </button>
+                        );
+                      })}
+                      <label
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "8px",
+                          color: "#cbd5e1",
+                          fontSize: "13px",
+                        }}
+                      >
+                        <span>
+                          {isEnglish ? "Bars before latest" : "最新から戻す本数"}
+                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="5000"
+                          step="10"
+                          value={viewSettings.initialPositionOffsetBars}
+                          onChange={(event) => {
+                            const nextValue = Math.round(
+                              clampNumber(Number(event.target.value), 0, 5000, 100)
+                            );
+                            anchorDailyDateRef.current = null;
+                            visibleLogicalRangeRef.current = null;
+                            setIsChartLoading(true);
+                            setViewSettings((settings) => ({
+                              ...settings,
+                              initialPositionMode: "offset",
+                              initialPositionOffsetBars: nextValue,
+                            }));
+                          }}
+                          style={{
+                            width: "92px",
+                            border: "1px solid #475569",
+                            borderRadius: "6px",
+                            backgroundColor: "#111827",
+                            color: "#f8fafc",
+                            padding: "7px 8px",
+                          }}
+                        />
+                      </label>
                     </div>
                   </div>
                 </div>
@@ -5915,6 +6480,7 @@ export default function App() {
                     setMaDisplaySettings(savedSettings.maSettings);
                     setAppearanceSettings(savedSettings.appearanceSettings);
                     setTradingSettings(savedSettings.tradingSettings);
+                    setViewSettings(savedSettings.viewSettings);
                     setLanguage(savedSettings.language);
                     setIsAppearanceSettingsOpen(false);
                   }}
@@ -5937,6 +6503,7 @@ export default function App() {
                       maSettings: maDisplaySettings,
                       appearanceSettings,
                       tradingSettings,
+                      viewSettings,
                       language,
                     });
                     setIsAppearanceSettingsOpen(false);

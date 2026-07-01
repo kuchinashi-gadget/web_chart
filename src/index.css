@@ -228,25 +228,6 @@ button {
   min-width: 0;
 }
 
-.timeframe-watermark {
-  position: absolute;
-  top: 12px;
-  left: 14px;
-  z-index: 4;
-  min-width: 76px;
-  padding: 7px 12px;
-  color: #fff;
-  background: color-mix(in srgb, var(--control-active-bg) 82%, transparent);
-  border: 1px solid color-mix(in srgb, var(--blue) 70%, #fff 10%);
-  border-radius: 7px;
-  box-shadow: 0 12px 24px rgb(0 0 0 / 22%);
-  font-size: 18px;
-  font-weight: 900;
-  line-height: 1;
-  text-align: center;
-  pointer-events: none;
-}
-
 .bar-navigation-button {
   min-height: 29px !important;
   padding: 4px 10px !important;
