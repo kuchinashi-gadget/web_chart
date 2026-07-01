@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import Papa from "papaparse";
 import {
   createChart,
   createSeriesMarkers,
@@ -12,7 +11,9 @@ import {
   type SeriesMarker,
   type Time,
 } from "lightweight-charts";
-import { DATA_FILES, getInstrumentDefinition } from "./dataFiles";
+import { DATA_FILES, getInstrumentDefinition } from "./data/defaultSymbols";
+import type { Candle, DisplayCandle } from "./types";
+import { parseDailyCandles } from "./utils/csv";
 
 declare global {
   interface Window {
@@ -165,27 +166,6 @@ type ChartViewState = {
 };
 type OrderAction = "add-short" | "close-short" | "add-long" | "close-long";
 type PositionSide = "short" | "long";
-
-type Candle = {
-  time: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-};
-
-type CsvCandleRow = {
-  Date?: string;
-  Open?: string | number;
-  High?: string | number;
-  Low?: string | number;
-  Close?: string | number;
-};
-
-type DisplayCandle = Candle & {
-  sourceStartTime: string;
-  sourceEndTime: string;
-};
 
 type MaPoint = {
   time: string;
@@ -2479,27 +2459,7 @@ export default function App() {
       }
 
       const csvText = await response.text();
-      const result = Papa.parse(csvText, {
-        header: true,
-        skipEmptyLines: true,
-      });
-
-      const candles = (result.data as CsvCandleRow[])
-        .map((row) => ({
-          time: row.Date?.substring(0, 10),
-          open: Number(row.Open),
-          high: Number(row.High),
-          low: Number(row.Low),
-          close: Number(row.Close),
-        }))
-        .filter(
-          (x): x is Candle =>
-            Boolean(x.time) &&
-            !Number.isNaN(x.open) &&
-            !Number.isNaN(x.high) &&
-            !Number.isNaN(x.low) &&
-            !Number.isNaN(x.close)
-        );
+      const candles = parseDailyCandles(csvText);
 
       dailyCandlesCacheRef.current.set(selectedDataPath, candles);
       return candles;
