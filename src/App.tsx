@@ -31,7 +31,7 @@ const PAINT_MARKS_STORAGE_KEY = "stock-practice-paint-marks-v1";
 const PAINT_CUSTOM_COLORS_STORAGE_KEY = "stock-practice-paint-custom-colors-v1";
 const PAINT_PRACTICE_DB_NAME = "stock-practice-paint-db";
 const PAINT_PRACTICE_STORE_NAME = "paint-practices";
-const TRADE_DRAW_RATE_THRESHOLD = 0.005;
+const DEFAULT_TRADE_DRAW_RATE_THRESHOLD = 0.005;
 
 
 type Timeframe = "daily" | "weekly" | "monthly";
@@ -124,6 +124,7 @@ type ChartAppearanceDraft = {
 };
 type TradingSettingsDraft = {
   executionTiming: ExecutionTiming;
+  drawRateThreshold: number;
 };
 type ViewSettingsDraft = {
   displayBarsMode: DisplayBarsMode;
@@ -782,6 +783,7 @@ const DEFAULT_CHART_APPEARANCE_DRAFT: ChartAppearanceDraft = {
 
 const DEFAULT_TRADING_SETTINGS_DRAFT: TradingSettingsDraft = {
   executionTiming: "next-open",
+  drawRateThreshold: DEFAULT_TRADE_DRAW_RATE_THRESHOLD,
 };
 
 const DEFAULT_VIEW_SETTINGS_DRAFT: ViewSettingsDraft = {
@@ -1028,6 +1030,12 @@ function normalizeTradingSettingsDraft(value: unknown): TradingSettingsDraft {
   return {
     executionTiming:
       item.executionTiming === "same-close" ? "same-close" : "next-open",
+    drawRateThreshold: clampNumber(
+      item.drawRateThreshold,
+      0,
+      0.2,
+      DEFAULT_TRADE_DRAW_RATE_THRESHOLD
+    ),
   };
 }
 
@@ -1679,6 +1687,7 @@ export default function App() {
     () => getInstrumentDefinition(DATA_FILES[0]).defaultLotSize
   );
   const [showProfit, setShowProfit] = useState(true);
+  const [showTradeScore, setShowTradeScore] = useState(true);
   const [isTradePanelOpen, setIsTradePanelOpen] = useState(false);
   const tradePanelBeforePaintRef = useRef(true);
   const [isPaintPracticeOpen, setIsPaintPracticeOpen] = useState(false);
@@ -2920,7 +2929,7 @@ export default function App() {
 
     if (baseValue > 0) {
       const profitRate = Math.abs(log.realizedProfit) / baseValue;
-      if (profitRate < TRADE_DRAW_RATE_THRESHOLD) return "draw";
+      if (profitRate < tradingSettings.drawRateThreshold) return "draw";
     }
 
     return log.realizedProfit > 0 ? "win" : "loss";
@@ -4985,16 +4994,27 @@ export default function App() {
               </dd>
             </div>
           </dl>
+          <div className="section-heading-row trade-score-heading">
+            <h2>{ui.tradeScore}</h2>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => setShowTradeScore((value) => !value)}
+              title={showTradeScore ? ui.hide : ui.show}
+              aria-label={showTradeScore ? ui.hide : ui.show}
+            >
+              {showTradeScore ? ui.show : ui.hide}
+            </button>
+          </div>
           <div className="trade-score">
-            <span>{ui.tradeScore}</span>
             <strong className="score-win">
-              {ui.win} {tradeOutcomeCounts.win}
+              {ui.win} {showTradeScore ? tradeOutcomeCounts.win : "-"}
             </strong>
             <strong className="score-loss">
-              {ui.loss} {tradeOutcomeCounts.loss}
+              {ui.loss} {showTradeScore ? tradeOutcomeCounts.loss : "-"}
             </strong>
             <strong className="score-draw">
-              {ui.draw} {tradeOutcomeCounts.draw}
+              {ui.draw} {showTradeScore ? tradeOutcomeCounts.draw : "-"}
             </strong>
           </div>
         </section>
@@ -6211,6 +6231,73 @@ export default function App() {
                         );
                       })}
                     </div>
+                  </div>
+                  <div
+                    style={{
+                      padding: "12px 14px",
+                      borderBottom: "1px solid #334155",
+                    }}
+                  >
+                    <label
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "180px 1fr",
+                        alignItems: "center",
+                        gap: "12px",
+                        color: "#f8fafc",
+                      }}
+                    >
+                      <strong>
+                        {isEnglish ? "Draw Threshold" : "引き分け基準"}
+                      </strong>
+                      <span
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                          flexWrap: "wrap",
+                          color: "#cbd5e1",
+                          fontSize: "13px",
+                        }}
+                      >
+                        <input
+                          type="number"
+                          min="0"
+                          max="20"
+                          step="0.1"
+                          value={Number(
+                            (tradingSettings.drawRateThreshold * 100).toFixed(2)
+                          )}
+                          onChange={(event) => {
+                            const nextRate =
+                              clampNumber(
+                                Number(event.target.value),
+                                0,
+                                20,
+                                DEFAULT_TRADE_DRAW_RATE_THRESHOLD * 100
+                              ) / 100;
+                            setTradingSettings((settings) => ({
+                              ...settings,
+                              drawRateThreshold: nextRate,
+                            }));
+                          }}
+                          style={{
+                            width: "90px",
+                            border: "1px solid #475569",
+                            borderRadius: "6px",
+                            backgroundColor: "#111827",
+                            color: "#f8fafc",
+                            padding: "7px 8px",
+                          }}
+                        />
+                        <span>%</span>
+                        <span>
+                          {isEnglish
+                            ? "Profit or loss below this rate is counted as a draw."
+                            : "損益率がこの割合未満なら引き分けにします。"}
+                        </span>
+                      </span>
+                    </label>
                   </div>
                   <div
                     style={{
