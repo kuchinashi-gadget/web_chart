@@ -46,7 +46,7 @@ type VisibleLogicalRange = { from: number; to: number };
 type DisplayBarsOption = "auto" | "remember" | "50" | "75" | "100" | "150" | "200";
 type DisplayBarsMode = "auto" | "remember" | "fixed";
 type InitialPositionMode = "latest" | "offset" | "remember" | "earliest";
-type SettingsTab = "ma" | "appearance" | "trading" | "view";
+type SettingsTab = "ma" | "appearance" | "trading" | "view" | "symbols";
 type TradeOutcome = "win" | "loss" | "draw";
 type ExecutionTiming = "next-open" | "same-close";
 type AppLanguage = "ja" | "en";
@@ -3805,37 +3805,39 @@ export default function App() {
     }
   };
 
-  const deleteEditingSavedCsvSymbol = async () => {
-    if (!editingSavedCsvSymbol) return;
+  const deleteSavedCsvSymbol = async (targetSymbol: SavedCsvSymbol) => {
+    const isEditingTarget = editingSavedCsvSymbol?.path === targetSymbol.path;
 
     const confirmed = window.confirm(
       isEnglish
-        ? `Delete ${editingSavedCsvSymbol.code} ${editingSavedCsvSymbol.name}?`
-        : `${editingSavedCsvSymbol.code} ${editingSavedCsvSymbol.name}を削除しますか？`
+        ? `Delete ${targetSymbol.code} ${targetSymbol.name}? Trading practice data and chart notes for this symbol will also be deleted.`
+        : `${targetSymbol.code} ${targetSymbol.name}を削除しますか？この銘柄の売買練習データとチャートメモも削除されます。`
     );
     if (!confirmed) return;
 
     try {
-      await deleteUserCsvFromDatabase(editingSavedCsvSymbol.path);
-      dailyCandlesCacheRef.current.delete(editingSavedCsvSymbol.path);
-      csvTextCacheRef.current.delete(editingSavedCsvSymbol.path);
+      await deleteUserCsvFromDatabase(targetSymbol.path);
+      dailyCandlesCacheRef.current.delete(targetSymbol.path);
+      csvTextCacheRef.current.delete(targetSymbol.path);
       setSavedCsvSymbols((symbols) =>
-        symbols.filter((symbol) => symbol.path !== editingSavedCsvSymbol.path)
+        symbols.filter((symbol) => symbol.path !== targetSymbol.path)
       );
       setTradingBooks((books) => {
         const nextBooks = { ...books };
-        delete nextBooks[editingSavedCsvSymbol.path];
+        delete nextBooks[targetSymbol.path];
         return nextBooks;
       });
       setPaintMarksByStock((marksByStock) => {
         const nextMarksByStock = { ...marksByStock };
-        delete nextMarksByStock[editingSavedCsvSymbol.path];
+        delete nextMarksByStock[targetSymbol.path];
         return nextMarksByStock;
       });
-      if (selectedDataPath === editingSavedCsvSymbol.path) {
+      if (selectedDataPath === targetSymbol.path) {
         switchDataPath(DATA_FILES[0], getInstrumentDefinition(DATA_FILES[0]));
       }
-      closeTemporarySymbolEditor();
+      if (isEditingTarget) {
+        closeTemporarySymbolEditor();
+      }
       showOrderMessage(
         isEnglish ? "Saved symbol was deleted" : "保存済み銘柄を削除しました"
       );
@@ -3848,8 +3850,16 @@ export default function App() {
     }
   };
 
-  const reimportEditingSavedCsvSymbol = async (file: File | null) => {
-    if (!file || !editingSavedCsvSymbol || !temporarySymbolForm) return;
+  const deleteEditingSavedCsvSymbol = async () => {
+    if (!editingSavedCsvSymbol) return;
+    await deleteSavedCsvSymbol(editingSavedCsvSymbol);
+  };
+
+  const reimportSavedCsvSymbol = async (
+    targetSymbol: SavedCsvSymbol,
+    file: File | null
+  ) => {
+    if (!file) return;
 
     try {
       const csvText = await file.text();
@@ -3865,34 +3875,36 @@ export default function App() {
       }
 
       const nextForm: TemporaryCsvSymbolForm = {
-        ...temporarySymbolForm,
+        ...createTemporaryCsvSymbolForm(targetSymbol),
         priceDecimals: String(getPriceDecimalsFromCandles(candles)),
       };
       const updatedSymbol = normalizeTemporaryCsvSymbolForm(
-        editingSavedCsvSymbol.path,
+        targetSymbol.path,
         file.name,
         nextForm
       );
       const savedSymbol: SavedCsvSymbol = {
         ...updatedSymbol,
-        savedAt: editingSavedCsvSymbol.savedAt,
+        savedAt: targetSymbol.savedAt,
       };
 
       await saveUserCsvToDatabase({
-        path: editingSavedCsvSymbol.path,
+        path: targetSymbol.path,
         csvText,
-        savedAt: editingSavedCsvSymbol.savedAt,
+        savedAt: targetSymbol.savedAt,
       });
-      dailyCandlesCacheRef.current.set(editingSavedCsvSymbol.path, candles);
-      csvTextCacheRef.current.set(editingSavedCsvSymbol.path, csvText);
+      dailyCandlesCacheRef.current.set(targetSymbol.path, candles);
+      csvTextCacheRef.current.set(targetSymbol.path, csvText);
       setSavedCsvSymbols((symbols) =>
         symbols.map((symbol) =>
-          symbol.path === editingSavedCsvSymbol.path ? savedSymbol : symbol
+          symbol.path === targetSymbol.path ? savedSymbol : symbol
         )
       );
-      setTemporarySymbolForm(createTemporaryCsvSymbolForm(savedSymbol));
+      if (editingSavedCsvSymbol?.path === targetSymbol.path) {
+        setTemporarySymbolForm(createTemporaryCsvSymbolForm(savedSymbol));
+      }
 
-      if (selectedDataPath === editingSavedCsvSymbol.path) {
+      if (selectedDataPath === targetSymbol.path) {
         setSharesPerLot(savedSymbol.defaultLotSize);
         setSelectedDailyCandles([]);
         setIsChartLoading(true);
@@ -3911,6 +3923,11 @@ export default function App() {
         isEnglish ? "Failed to reimport CSV" : "CSVの差し替えに失敗しました"
       );
     }
+  };
+
+  const reimportEditingSavedCsvSymbol = async (file: File | null) => {
+    if (!editingSavedCsvSymbol) return;
+    await reimportSavedCsvSymbol(editingSavedCsvSymbol, file);
   };
 
   const importTemporaryCsv = async (file: File | null) => {
@@ -7016,7 +7033,7 @@ export default function App() {
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
                   gap: "8px",
                   marginBottom: "16px",
                 }}
@@ -7027,6 +7044,10 @@ export default function App() {
                     {
                       value: "view",
                       label: isEnglish ? "Display" : "表示",
+                    },
+                    {
+                      value: "symbols",
+                      label: isEnglish ? "Symbols" : "銘柄管理",
                     },
                     { value: "appearance", label: ui.chartAppearance },
                     { value: "trading", label: ui.tradeSettings },
@@ -7660,6 +7681,187 @@ export default function App() {
                       </label>
                     </div>
                   </div>
+                </div>
+              ) : settingsTab === "symbols" ? (
+                <div
+                  style={{
+                    border: "1px solid #334155",
+                    borderRadius: "8px",
+                    overflow: "hidden",
+                    backgroundColor: "rgba(15, 23, 42, 0.72)",
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: "14px",
+                      borderBottom: "1px solid #334155",
+                      display: "grid",
+                      gap: "6px",
+                    }}
+                  >
+                    <strong style={{ color: "#f8fafc" }}>
+                      {isEnglish ? "Saved Symbols" : "保存済み銘柄"}
+                    </strong>
+                    <span
+                      style={{
+                        color: "#94a3b8",
+                        fontSize: "12px",
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {isEnglish
+                        ? "Manage CSV symbols saved in this browser. Deleting a symbol also removes its trading practice data and chart notes."
+                        : "このブラウザに保存したCSV銘柄を管理します。削除すると、その銘柄の売買練習データとチャートメモも削除します。"}
+                    </span>
+                  </div>
+
+                  {savedCsvSymbols.length === 0 ? (
+                    <div
+                      style={{
+                        padding: "18px",
+                        color: "#94a3b8",
+                        fontSize: "13px",
+                      }}
+                    >
+                      {isEnglish
+                        ? "No saved symbols yet. Import a CSV, then save it from symbol settings."
+                        : "保存済み銘柄はまだありません。CSVを読み込んだあと、銘柄設定から保存できます。"}
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: "10px",
+                        padding: "12px",
+                        maxHeight: "420px",
+                        overflowY: "auto",
+                      }}
+                    >
+                      {savedCsvSymbols.map((symbol) => {
+                        const isCurrent = selectedDataPath === symbol.path;
+                        const tradeLogCount =
+                          tradingBooks[symbol.path]?.logs.length ?? 0;
+                        const memoCount =
+                          paintMarksByStock[symbol.path]?.length ?? 0;
+
+                        return (
+                          <div
+                            key={symbol.path}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns:
+                                "minmax(0, 1fr) auto auto auto",
+                              gap: "8px",
+                              alignItems: "center",
+                              padding: "10px",
+                              border: isCurrent
+                                ? "1px solid #60a5fa"
+                                : "1px solid #334155",
+                              borderRadius: "8px",
+                              backgroundColor: isCurrent
+                                ? "rgba(37, 99, 235, 0.18)"
+                                : "#111827",
+                            }}
+                          >
+                            <div style={{ minWidth: 0 }}>
+                              <div
+                                style={{
+                                  color: "#f8fafc",
+                                  fontWeight: 800,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {symbol.code} {symbol.name}
+                                {isCurrent
+                                  ? isEnglish
+                                    ? "  · Current"
+                                    : "  · 選択中"
+                                  : ""}
+                              </div>
+                              <div
+                                style={{
+                                  color: "#94a3b8",
+                                  fontSize: "12px",
+                                  marginTop: "4px",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {symbol.currency} /{" "}
+                                {symbol.unitLabel || (isEnglish ? "unitless" : "単位なし")}{" "}
+                                / {symbol.defaultLotSize} / x{symbol.multiplier}
+                                {"  · "}
+                                {isEnglish ? "Logs" : "ログ"} {tradeLogCount}
+                                {"  · "}
+                                {isEnglish ? "Notes" : "メモ"} {memoCount}
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => openTemporarySymbolEditor(symbol)}
+                              style={{
+                                border: "1px solid #475569",
+                                borderRadius: "6px",
+                                backgroundColor: "#1e293b",
+                                color: "#e5e7eb",
+                                padding: "8px 10px",
+                                cursor: "pointer",
+                                fontWeight: 700,
+                              }}
+                            >
+                              {isEnglish ? "Edit" : "編集"}
+                            </button>
+
+                            <label
+                              style={{
+                                border: "1px solid #475569",
+                                borderRadius: "6px",
+                                backgroundColor: "#1e293b",
+                                color: "#e5e7eb",
+                                padding: "8px 10px",
+                                cursor: "pointer",
+                                fontWeight: 700,
+                                textAlign: "center",
+                              }}
+                            >
+                              {isEnglish ? "Replace" : "差替"}
+                              <input
+                                type="file"
+                                accept=".csv,text/csv"
+                                onChange={(event) => {
+                                  const file =
+                                    event.currentTarget.files?.[0] ?? null;
+                                  void reimportSavedCsvSymbol(symbol, file);
+                                  event.currentTarget.value = "";
+                                }}
+                                style={{ display: "none" }}
+                              />
+                            </label>
+
+                            <button
+                              type="button"
+                              onClick={() => void deleteSavedCsvSymbol(symbol)}
+                              style={{
+                                border: "1px solid #7f1d1d",
+                                borderRadius: "6px",
+                                backgroundColor: "#450a0a",
+                                color: "#fecaca",
+                                padding: "8px 10px",
+                                cursor: "pointer",
+                                fontWeight: 700,
+                              }}
+                            >
+                              {isEnglish ? "Delete" : "削除"}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               ) : settingsTab === "trading" ? (
                 <div
