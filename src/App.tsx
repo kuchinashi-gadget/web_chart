@@ -29,6 +29,7 @@ const CHART_VIEW_STATE_STORAGE_KEY = "stock-practice-chart-view-state-v1";
 const SOUND_ENABLED_STORAGE_KEY = "stock-practice-sound-enabled-v1";
 const PAINT_MARKS_STORAGE_KEY = "stock-practice-paint-marks-v1";
 const PAINT_CUSTOM_COLORS_STORAGE_KEY = "stock-practice-paint-custom-colors-v1";
+const PAINT_TOOL_COLORS_STORAGE_KEY = "stock-practice-paint-tool-colors-v1";
 const PAINT_PRACTICE_DB_NAME = "stock-practice-paint-db";
 const PAINT_PRACTICE_STORE_NAME = "paint-practices";
 const DEFAULT_TRADE_DRAW_RATE_THRESHOLD = 0.005;
@@ -61,6 +62,7 @@ type PaintPracticeTool =
   | "rectangle"
   | "text"
   | "eraser";
+type PaintToolColorMap = Partial<Record<PaintPracticeTool, string>>;
 
 type PaintPoint = {
   x: number;
@@ -914,6 +916,31 @@ function loadPaintCustomColors() {
   }
 }
 
+function loadPaintToolColors(): PaintToolColorMap {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const stored = JSON.parse(
+      window.localStorage.getItem(PAINT_TOOL_COLORS_STORAGE_KEY) ?? "{}"
+    );
+    if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+      return {};
+    }
+
+    const colors: PaintToolColorMap = {};
+    for (const tool of paintPracticeTools) {
+      const color = (stored as Record<string, unknown>)[tool.value];
+      if (typeof color === "string" && /^#[0-9a-f]{6}$/i.test(color)) {
+        colors[tool.value] = color.toLowerCase();
+      }
+    }
+
+    return colors;
+  } catch {
+    return {};
+  }
+}
+
 const EMPTY_PAINT_MARKS: PaintMark[] = [];
 
 function getPaintMarkDisplayText(mark: PaintMark) {
@@ -1626,6 +1653,7 @@ export default function App() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartApiRef = useRef<IChartApi | null>(null);
   const paintCanvasRef = useRef<HTMLCanvasElement>(null);
+  const paintTextInputRef = useRef<HTMLInputElement | null>(null);
   const paintPointerActiveRef = useRef(false);
   const customColorEditingIndexRef = useRef<number | null>(null);
   const lastChartWidthRef = useRef(0);
@@ -1694,9 +1722,14 @@ export default function App() {
   const [isPaintCanvasActive, setIsPaintCanvasActive] = useState(false);
   const [isPaintCanvasReady, setIsPaintCanvasReady] = useState(false);
   const [isPaintCapturing, setIsPaintCapturing] = useState(false);
+  const [paintToolColors, setPaintToolColors] = useState<PaintToolColorMap>(
+    loadPaintToolColors
+  );
   const [paintPracticeTool, setPaintPracticeTool] =
     useState<PaintPracticeTool>("line");
-  const [paintPracticeColor, setPaintPracticeColor] = useState("#22c55e");
+  const [paintPracticeColor, setPaintPracticeColor] = useState(
+    () => loadPaintToolColors().line ?? paintPracticeColors[0]
+  );
   const [paintCustomColors, setPaintCustomColors] = useState<string[]>(
     loadPaintCustomColors
   );
@@ -1715,6 +1748,9 @@ export default function App() {
     useState<PaintDrawingObject | null>(null);
   const [paintTextEditor, setPaintTextEditor] =
     useState<PaintTextEditor | null>(null);
+  const paintTextEditorPositionKey = paintTextEditor
+    ? `${paintTextEditor.left}:${paintTextEditor.top}`
+    : "";
   const [paintSavedItems, setPaintSavedItems] = useState<
     SavedPaintPractice[]
   >([]);
@@ -2048,6 +2084,33 @@ export default function App() {
       JSON.stringify(paintCustomColors)
     );
   }, [paintCustomColors]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      PAINT_TOOL_COLORS_STORAGE_KEY,
+      JSON.stringify(paintToolColors)
+    );
+  }, [paintToolColors]);
+
+  useEffect(() => {
+    if (!paintTextEditorPositionKey) return;
+
+    const focusTextInput = () => {
+      const input = paintTextInputRef.current;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      const caretPosition = input.value.length;
+      input.setSelectionRange(caretPosition, caretPosition);
+    };
+
+    const frameId = requestAnimationFrame(focusTextInput);
+    const timeoutId = window.setTimeout(focusTextInput, 0);
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [paintTextEditorPositionKey]);
 
   useEffect(() => {
     processPendingOrderRef.current = (
@@ -3484,9 +3547,38 @@ export default function App() {
     setPaintTextEditor(null);
   };
 
-  const updateCustomPaintColor = (colorValue: string) => {
+  const applyPaintPracticeColor = (colorValue: string) => {
     const color = colorValue.toLowerCase();
     setPaintPracticeColor(color);
+    if (paintPracticeTool !== "eraser") {
+      setPaintToolColors((colors) => ({
+        ...colors,
+        [paintPracticeTool]: color,
+      }));
+    }
+  };
+
+  const changePaintPracticeTool = (tool: PaintPracticeTool) => {
+    if (paintTextEditor) {
+      commitPaintText();
+    }
+
+    setPaintToolColors((colors) => ({
+      ...colors,
+      ...(paintPracticeTool !== "eraser"
+        ? { [paintPracticeTool]: paintPracticeColor }
+        : {}),
+    }));
+    setPaintPracticeTool(tool);
+
+    if (tool !== "eraser") {
+      setPaintPracticeColor(paintToolColors[tool] ?? paintPracticeColor);
+    }
+  };
+
+  const updateCustomPaintColor = (colorValue: string) => {
+    const color = colorValue.toLowerCase();
+    applyPaintPracticeColor(color);
 
     setPaintCustomColors((colors) => {
       const existingIndex = colors.indexOf(color);
@@ -3514,7 +3606,7 @@ export default function App() {
   const removeCustomPaintColor = (color: string) => {
     setPaintCustomColors((colors) => colors.filter((item) => item !== color));
     if (paintPracticeColor === color) {
-      setPaintPracticeColor(paintPracticeColors[0]);
+      applyPaintPracticeColor(paintPracticeColors[0]);
     }
     customColorEditingIndexRef.current = null;
   };
@@ -3537,6 +3629,11 @@ export default function App() {
     }
 
     if (paintPracticeTool === "text") {
+      event.preventDefault();
+      const existingText = paintTextEditor?.value.trim();
+      if (existingText) {
+        commitPaintText();
+      }
       const placeholderRectangle =
         event.currentTarget.parentElement?.getBoundingClientRect();
       if (!placeholderRectangle) return;
@@ -3601,21 +3698,21 @@ export default function App() {
     setPaintObjects([...paintObjects, completedObject]);
   };
 
-  const undoPaintDrawing = () => {
+  const undoPaintDrawing = useCallback(() => {
     const previous = paintUndoStack[paintUndoStack.length - 1];
     if (!previous) return;
     setPaintUndoStack((stack) => stack.slice(0, -1));
     setPaintRedoStack((stack) => [...stack, paintObjects]);
     setPaintObjects(previous);
-  };
+  }, [paintObjects, paintUndoStack]);
 
-  const redoPaintDrawing = () => {
+  const redoPaintDrawing = useCallback(() => {
     const next = paintRedoStack[paintRedoStack.length - 1];
     if (!next) return;
     setPaintRedoStack((stack) => stack.slice(0, -1));
     setPaintUndoStack((stack) => [...stack, paintObjects]);
     setPaintObjects(next);
-  };
+  }, [paintObjects, paintRedoStack]);
 
   const clearPaintDrawing = () => {
     if (paintObjects.length === 0) return;
@@ -3770,10 +3867,35 @@ export default function App() {
     };
 
     const handleShortcutKeyDown = (event: KeyboardEvent) => {
-      if (event.altKey || event.ctrlKey || event.metaKey) return;
-      if (isShortcutDisabledTarget(event.target)) return;
-
       const key = event.key.toLowerCase();
+      const isEditableTarget = isShortcutDisabledTarget(event.target);
+
+      if (
+        isPaintPracticeOpen &&
+        isPaintCanvasActive &&
+        !isEditableTarget &&
+        !event.altKey &&
+        (event.ctrlKey || event.metaKey)
+      ) {
+        if (key === "z" && event.shiftKey) {
+          event.preventDefault();
+          redoPaintDrawing();
+          return;
+        }
+        if (key === "z") {
+          event.preventDefault();
+          undoPaintDrawing();
+          return;
+        }
+        if (key === "y") {
+          event.preventDefault();
+          redoPaintDrawing();
+          return;
+        }
+      }
+
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (isEditableTarget) return;
 
       if (key === "d" || key === "w" || key === "m") {
         event.preventDefault();
@@ -3825,9 +3947,12 @@ export default function App() {
   }, [
     timeframe,
     isPaintPracticeOpen,
+    isPaintCanvasActive,
     isPaintHistoryOpen,
     isAppearanceSettingsOpen,
     isDatePickerOpen,
+    undoPaintDrawing,
+    redoPaintDrawing,
     openPaintPractice,
     closePaintPractice,
     changeTimeframe,
@@ -4518,6 +4643,7 @@ export default function App() {
                   }}
                 >
                   <input
+                    ref={paintTextInputRef}
                     type="text"
                     autoFocus
                     value={paintTextEditor.value}
@@ -4654,10 +4780,7 @@ export default function App() {
                   className={
                     paintPracticeTool === tool.value ? "is-selected" : ""
                   }
-                  onClick={() => {
-                    setPaintTextEditor(null);
-                    setPaintPracticeTool(tool.value);
-                  }}
+                  onClick={() => changePaintPracticeTool(tool.value)}
                   disabled={!isPaintDrawingReady}
                 >
                   {tool.value === "eraser" ? (
@@ -4684,7 +4807,7 @@ export default function App() {
                     paintPracticeColor === color ? "is-selected" : ""
                   }
                   style={{ backgroundColor: color }}
-                  onClick={() => setPaintPracticeColor(color)}
+                  onClick={() => applyPaintPracticeColor(color)}
                   disabled={!isPaintDrawingReady}
                   aria-label={
                     isEnglish ? `Drawing color ${color}` : `描画色 ${color}`
@@ -4699,7 +4822,7 @@ export default function App() {
                       paintPracticeColor === color ? "is-selected" : ""
                     }
                     style={{ backgroundColor: color }}
-                    onClick={() => setPaintPracticeColor(color)}
+                    onClick={() => applyPaintPracticeColor(color)}
                     disabled={!isPaintDrawingReady}
                     aria-label={
                       isEnglish
