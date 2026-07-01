@@ -8,6 +8,7 @@ import {
   LineSeries,
   LineStyle,
   type IChartApi,
+  type Logical,
   type SeriesMarker,
   type Time,
 } from "lightweight-charts";
@@ -75,6 +76,15 @@ type PaintTextDragState = {
   startPoint: PaintPoint;
   originalObjects: PaintDrawingObject[];
   moved: boolean;
+};
+type BarCountMeasurement = {
+  startIndex: number;
+  endIndex?: number;
+  startDate: string;
+  endDate?: string;
+  left: number;
+  right?: number;
+  count?: number;
 };
 
 type PaintPoint = {
@@ -1745,6 +1755,8 @@ export default function App() {
   const paintTextInputRef = useRef<HTMLInputElement | null>(null);
   const paintPointerActiveRef = useRef(false);
   const paintTextDragRef = useRef<PaintTextDragState | null>(null);
+  const isBarCountModeRef = useRef(false);
+  const barCountMeasurementRef = useRef<BarCountMeasurement | null>(null);
   const customColorEditingIndexRef = useRef<number | null>(null);
   const lastChartWidthRef = useRef(0);
   const wheelNavigationAccumulatorRef = useRef(0);
@@ -1849,6 +1861,9 @@ export default function App() {
   >([]);
   const [isPaintHistoryOpen, setIsPaintHistoryOpen] = useState(false);
   const [paintStatusMessage, setPaintStatusMessage] = useState("");
+  const [isBarCountMode, setIsBarCountMode] = useState(false);
+  const [barCountMeasurement, setBarCountMeasurement] =
+    useState<BarCountMeasurement | null>(null);
   const [canNavigateForward, setCanNavigateForward] = useState(false);
   const [selectedDailyCandles, setSelectedDailyCandles] = useState<Candle[]>([]);
   const [tradingBooks, setTradingBooks] = useState<
@@ -2034,6 +2049,8 @@ export default function App() {
     (nextTimeframe: Timeframe) => {
       if (timeframe === nextTimeframe) return;
 
+      barCountMeasurementRef.current = null;
+      setBarCountMeasurement(null);
       const currentAnchor = dateInputValue || anchorDailyDateRef.current || "";
       if (timeframe === "daily") {
         returnDailyDateRef.current = currentAnchor;
@@ -2191,6 +2208,14 @@ export default function App() {
       JSON.stringify(paintTextSettings)
     );
   }, [paintTextSettings]);
+
+  useEffect(() => {
+    isBarCountModeRef.current = isBarCountMode;
+  }, [isBarCountMode]);
+
+  useEffect(() => {
+    barCountMeasurementRef.current = barCountMeasurement;
+  }, [barCountMeasurement]);
 
   useEffect(() => {
     if (!paintTextEditorPositionKey) return;
@@ -2794,7 +2819,94 @@ export default function App() {
               },
             }));
           }
+          refreshBarCountOverlay();
         };
+
+        const buildBarCountMeasurement = (
+          startIndex: number,
+          endIndexForCount?: number
+        ): BarCountMeasurement | null => {
+          const startCandle = allCandles[startIndex];
+          if (!startCandle || startIndex >= endIndex) return null;
+
+          const startX = chart
+            .timeScale()
+            .logicalToCoordinate(startIndex as Logical);
+          if (startX === null) return null;
+
+          if (endIndexForCount === undefined) {
+            return {
+              startIndex,
+              startDate: startCandle.time,
+              left: startX,
+            };
+          }
+
+          const boundedEndIndex = Math.min(
+            endIndex - 1,
+            Math.max(0, endIndexForCount)
+          );
+          const endCandle = allCandles[boundedEndIndex];
+          if (!endCandle) return null;
+
+          const endX = chart
+            .timeScale()
+            .logicalToCoordinate(boundedEndIndex as Logical);
+          if (endX === null) return null;
+
+          return {
+            startIndex,
+            endIndex: boundedEndIndex,
+            startDate: startCandle.time,
+            endDate: endCandle.time,
+            left: startX,
+            right: endX,
+            count: Math.abs(boundedEndIndex - startIndex) + 1,
+          };
+        };
+
+        function refreshBarCountOverlay() {
+          const measurement = barCountMeasurementRef.current;
+          if (!measurement) return;
+
+          const refreshed = buildBarCountMeasurement(
+            measurement.startIndex,
+            measurement.endIndex
+          );
+          barCountMeasurementRef.current = refreshed;
+          setBarCountMeasurement(refreshed);
+        }
+
+        const getClickedBarIndex = (param: {
+          time?: Time;
+          logical?: Logical | null;
+        }) => {
+          if (typeof param.logical === "number") {
+            const logicalIndex = Math.round(Number(param.logical));
+            if (logicalIndex >= 0 && logicalIndex < endIndex) {
+              return logicalIndex;
+            }
+          }
+
+          const clickedDate = chartTimeToDateText(param.time);
+          if (!clickedDate) return null;
+
+          const exactIndex = candleIndexByTime.get(clickedDate);
+          if (exactIndex !== undefined && exactIndex < endIndex) {
+            return exactIndex;
+          }
+
+          const rangedIndex = allCandles.findIndex(
+            (candle) =>
+              clickedDate >= candle.sourceStartTime &&
+              clickedDate <= candle.sourceEndTime
+          );
+
+          return rangedIndex >= 0 && rangedIndex < endIndex
+            ? rangedIndex
+            : null;
+        };
+
         chart
           .timeScale()
           .subscribeVisibleLogicalRangeChange(updateVisibleBarsCount);
@@ -2838,7 +2950,29 @@ export default function App() {
           updateChart();
         };
 
-        const handleChartClick = (param: { time?: Time }) => {
+        const handleChartClick = (param: {
+          time?: Time;
+          logical?: Logical | null;
+        }) => {
+          if (isBarCountModeRef.current) {
+            const clickedIndex = getClickedBarIndex(param);
+            if (clickedIndex === null) return;
+
+            const currentMeasurement = barCountMeasurementRef.current;
+            const nextMeasurement =
+              !currentMeasurement ||
+              currentMeasurement.endIndex !== undefined
+                ? buildBarCountMeasurement(clickedIndex)
+                : buildBarCountMeasurement(
+                    currentMeasurement.startIndex,
+                    clickedIndex
+                  );
+
+            barCountMeasurementRef.current = nextMeasurement;
+            setBarCountMeasurement(nextMeasurement);
+            return;
+          }
+
           const clickedDate = chartTimeToDateText(param.time);
           if (!clickedDate) return;
 
@@ -2865,6 +2999,12 @@ export default function App() {
             target?.tagName === "INPUT" ||
             target?.tagName === "SELECT" ||
             target?.tagName === "TEXTAREA";
+
+          if (event.key === "Escape" && barCountMeasurementRef.current) {
+            barCountMeasurementRef.current = null;
+            setBarCountMeasurement(null);
+            return;
+          }
 
           if (event.key === "Enter" && !isFormControl) {
             moveSelectedDateToRight();
@@ -4193,6 +4333,8 @@ export default function App() {
               setSelectedChartDate("");
               setTradingDates(new Set());
               setSelectedDailyCandles([]);
+              barCountMeasurementRef.current = null;
+              setBarCountMeasurement(null);
               showOrderMessage("");
               setIsDatePickerOpen(false);
               setIsChartLoading(true);
@@ -4380,6 +4522,40 @@ export default function App() {
           }}
         >
           {soundEnabled ? `🔊 ${ui.soundOn}` : `🔇 ${ui.muted}`}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            barCountMeasurementRef.current = null;
+            setIsBarCountMode((enabled) => !enabled);
+            setBarCountMeasurement(null);
+          }}
+          title={
+            isEnglish
+              ? "Click two candles to count bars"
+              : "ローソク足を2回クリックして本数を数えます"
+          }
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            backgroundColor: isBarCountMode
+              ? "var(--control-active-bg)"
+              : "var(--panel-muted)",
+            border: isBarCountMode
+              ? "1px solid var(--blue)"
+              : "1px solid var(--border-strong)",
+            color: isBarCountMode ? "#fff" : "var(--text)",
+            padding: "5px 10px",
+            borderRadius: "6px",
+            cursor: "pointer",
+            fontSize: "14px",
+            fontWeight: 700,
+            whiteSpace: "nowrap",
+          }}
+        >
+          ↔ {isEnglish ? "Count" : "本数計測"}
         </button>
 
         <button
@@ -4730,6 +4906,53 @@ export default function App() {
             height: "100%",
           }}
         />
+
+        {barCountMeasurement && !isPaintCanvasActive && (
+          <div className="bar-count-overlay" aria-hidden="true">
+            {barCountMeasurement.endIndex === undefined ? (
+              <div
+                className="bar-count-anchor"
+                style={{ left: `${barCountMeasurement.left}px` }}
+              >
+                <span>{isEnglish ? "Start" : "始点"}</span>
+              </div>
+            ) : (
+              <>
+                <div
+                  className="bar-count-range"
+                  style={{
+                    left: `${Math.min(
+                      barCountMeasurement.left,
+                      barCountMeasurement.right ?? barCountMeasurement.left
+                    )}px`,
+                    width: `${Math.max(
+                      2,
+                      Math.abs(
+                        (barCountMeasurement.right ??
+                          barCountMeasurement.left) -
+                          barCountMeasurement.left
+                      )
+                    )}px`,
+                  }}
+                />
+                <div
+                  className="bar-count-label"
+                  style={{
+                    left: `${
+                      (barCountMeasurement.left +
+                        (barCountMeasurement.right ??
+                          barCountMeasurement.left)) /
+                      2
+                    }px`,
+                  }}
+                >
+                  {barCountMeasurement.count}
+                  {isEnglish ? " bars" : "本"}
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {isPaintPracticeOpen && isPaintCanvasActive && (
           <div className="paint-canvas-workspace">

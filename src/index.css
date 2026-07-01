@@ -310,6 +310,53 @@ button {
   transition: margin-left 180ms ease;
 }
 
+.bar-count-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.bar-count-anchor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px dashed #facc15;
+  transform: translateX(-1px);
+}
+
+.bar-count-anchor span,
+.bar-count-label {
+  position: absolute;
+  top: 12px;
+  padding: 4px 8px;
+  color: #0f172a;
+  background: #facc15;
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.24);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.bar-count-anchor span {
+  left: 6px;
+}
+
+.bar-count-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(250, 204, 21, 0.12);
+  border-left: 2px dashed #facc15;
+  border-right: 2px dashed #facc15;
+}
+
+.bar-count-label {
+  transform: translateX(-50%);
+}
+
 .paint-practice-open .chart-stage {
   margin-left: 298px;
 }
