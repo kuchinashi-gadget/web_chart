@@ -35,6 +35,9 @@ const PAINT_TOOL_COLORS_STORAGE_KEY = "stock-practice-paint-tool-colors-v1";
 const PAINT_TEXT_SETTINGS_STORAGE_KEY = "stock-practice-paint-text-settings-v1";
 const PAINT_PRACTICE_DB_NAME = "stock-practice-paint-db";
 const PAINT_PRACTICE_STORE_NAME = "paint-practices";
+const USER_SYMBOLS_STORAGE_KEY = "stock-practice-user-symbols-v1";
+const USER_SYMBOLS_DB_NAME = "stock-practice-user-symbols-db";
+const USER_SYMBOLS_STORE_NAME = "csv-files";
 const DEFAULT_TRADE_DRAW_RATE_THRESHOLD = 0.005;
 
 
@@ -168,6 +171,9 @@ type TemporaryCsvSymbol = InstrumentDefinition & {
   code: string;
   name: string;
   fileName: string;
+};
+type SavedCsvSymbol = TemporaryCsvSymbol & {
+  savedAt: string;
 };
 type TemporaryCsvSymbolForm = {
   code: string;
@@ -562,6 +568,61 @@ async function deletePaintPracticeFromDatabase(id: string) {
     transaction.onerror = () => reject(transaction.error);
   });
   database.close();
+}
+
+function openUserSymbolsDatabase() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(USER_SYMBOLS_DB_NAME, 1);
+
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(USER_SYMBOLS_STORE_NAME)) {
+        database.createObjectStore(USER_SYMBOLS_STORE_NAME, {
+          keyPath: "path",
+        });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function saveUserCsvToDatabase(record: {
+  path: string;
+  csvText: string;
+  savedAt: string;
+}) {
+  const database = await openUserSymbolsDatabase();
+
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(
+      USER_SYMBOLS_STORE_NAME,
+      "readwrite"
+    );
+    transaction.objectStore(USER_SYMBOLS_STORE_NAME).put(record);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  database.close();
+}
+
+async function loadUserCsvTextFromDatabase(path: string) {
+  const database = await openUserSymbolsDatabase();
+  const csvText = await new Promise<string | null>((resolve, reject) => {
+    const transaction = database.transaction(
+      USER_SYMBOLS_STORE_NAME,
+      "readonly"
+    );
+    const request = transaction.objectStore(USER_SYMBOLS_STORE_NAME).get(path);
+    request.onsuccess = () => {
+      const result = request.result as { csvText?: unknown } | undefined;
+      resolve(typeof result?.csvText === "string" ? result.csvText : null);
+    };
+    request.onerror = () => reject(request.error);
+  });
+  database.close();
+
+  return csvText;
 }
 
 function createId(prefix: string) {
@@ -1568,18 +1629,38 @@ function createTemporaryCsvPath(fileName: string) {
   return `temp-csv:${Date.now()}:${fileName}`;
 }
 
-function getPriceDecimalsFromCandles(candles: Candle[]) {
-  const maxDecimals = candles.reduce((max, candle) => {
-    const values = [candle.open, candle.high, candle.low, candle.close];
-    const candleMax = values.reduce((valueMax, value) => {
-      const decimalText = String(value).split(".")[1] ?? "";
-      return Math.max(valueMax, decimalText.length);
-    }, 0);
+function createSavedCsvPath(fileName: string) {
+  return `user-csv:${Date.now()}:${fileName}`;
+}
 
-    return Math.max(max, candleMax);
+function isTemporaryCsvPath(path: string) {
+  return path.startsWith("temp-csv:");
+}
+
+function isUserCsvPath(path: string) {
+  return path.startsWith("user-csv:");
+}
+
+function getPriceDecimalsFromCandles(candles: Candle[]) {
+  const values = candles.flatMap((candle) => [
+    candle.open,
+    candle.high,
+    candle.low,
+    candle.close,
+  ]);
+  const maxDecimals = values.reduce((max, value) => {
+    const decimalText = String(value).split(".")[1]?.replace(/0+$/, "") ?? "";
+    return Math.max(max, decimalText.length);
   }, 0);
 
-  return Math.min(5, Math.max(0, maxDecimals));
+  if (maxDecimals <= 4) return Math.max(0, maxDecimals);
+
+  const sortedValues = [...values].sort((a, b) => a - b);
+  const medianPrice = sortedValues[Math.floor(sortedValues.length / 2)] ?? 0;
+  if (medianPrice >= 1000) return 2;
+  if (medianPrice >= 100) return 3;
+
+  return 5;
 }
 
 function createTemporaryCsvSymbolForm(
@@ -1604,11 +1685,17 @@ function normalizeTemporaryCsvSymbolForm(
   const code = form.code.trim() || fileName.replace(/\.[^.]+$/, "");
   const name = form.name.trim() || fileName;
   const currency = (form.currency.trim() || "JPY").toUpperCase();
-  const defaultLotSize = clampNumber(Number(form.defaultLotSize), 0.000001, 1_000_000_000, 1);
+  let defaultLotSize = clampNumber(Number(form.defaultLotSize), 0.000001, 1_000_000_000, 1);
   const multiplier = clampNumber(Number(form.multiplier), 0.000001, 1_000_000_000, 1);
   const priceDecimals = Math.round(
     clampNumber(Number(form.priceDecimals), 0, 8, 0)
   );
+  let unitLabel = form.unitLabel.trim();
+  const numericUnitLabel = Number(unitLabel);
+  if (unitLabel && Number.isFinite(numericUnitLabel)) {
+    defaultLotSize = numericUnitLabel;
+    unitLabel = "";
+  }
 
   return {
     path,
@@ -1616,11 +1703,85 @@ function normalizeTemporaryCsvSymbolForm(
     name,
     fileName,
     currency,
-    unitLabel: form.unitLabel.trim(),
+    unitLabel,
     defaultLotSize,
     multiplier,
     priceDecimals,
   };
+}
+
+function normalizeSavedCsvSymbol(value: unknown): SavedCsvSymbol | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const symbol = value as Partial<SavedCsvSymbol>;
+  if (
+    typeof symbol.path !== "string" ||
+    !isUserCsvPath(symbol.path) ||
+    typeof symbol.code !== "string" ||
+    typeof symbol.name !== "string" ||
+    typeof symbol.fileName !== "string" ||
+    typeof symbol.currency !== "string" ||
+    typeof symbol.unitLabel !== "string" ||
+    typeof symbol.savedAt !== "string" ||
+    typeof symbol.defaultLotSize !== "number" ||
+    typeof symbol.multiplier !== "number" ||
+    typeof symbol.priceDecimals !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    path: symbol.path,
+    code: symbol.code,
+    name: symbol.name,
+    fileName: symbol.fileName,
+    currency: symbol.currency,
+    unitLabel: symbol.unitLabel,
+    defaultLotSize: symbol.defaultLotSize,
+    multiplier: symbol.multiplier,
+    priceDecimals: symbol.priceDecimals,
+    savedAt: symbol.savedAt,
+  };
+}
+
+function loadSavedCsvSymbolsFromStorage(): SavedCsvSymbol[] {
+  try {
+    const raw = window.localStorage.getItem(USER_SYMBOLS_STORAGE_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((item) => normalizeSavedCsvSymbol(item))
+      .filter((item): item is SavedCsvSymbol => Boolean(item));
+  } catch (error) {
+    console.error(error);
+    return [];
+  }
+}
+
+function saveSavedCsvSymbolsToStorage(symbols: SavedCsvSymbol[]) {
+  try {
+    window.localStorage.setItem(
+      USER_SYMBOLS_STORAGE_KEY,
+      JSON.stringify(symbols)
+    );
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function candlesToCsvText(candles: Candle[]) {
+  return [
+    "Date,Open,High,Low,Close",
+    ...candles.map(
+      (candle) =>
+        `${candle.time},${candle.open},${candle.high},${candle.low},${candle.close}`
+    ),
+  ].join("\n");
 }
 
 const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
@@ -1821,6 +1982,7 @@ export default function App() {
   >(null);
   const processedOrderIdsRef = useRef(new Set<string>());
   const dailyCandlesCacheRef = useRef(new Map<string, Candle[]>());
+  const csvTextCacheRef = useRef(new Map<string, string>());
   const anchorDailyDateRef = useRef<string | null>(null);
   const returnDailyDateRef = useRef<string | null>(null);
   const upperTimeframeMovedRef = useRef(false);
@@ -1833,7 +1995,13 @@ export default function App() {
   const [temporaryCsvSymbols, setTemporaryCsvSymbols] = useState<
     TemporaryCsvSymbol[]
   >([]);
+  const [savedCsvSymbols, setSavedCsvSymbols] = useState<SavedCsvSymbol[]>(
+    () => loadSavedCsvSymbolsFromStorage()
+  );
   const selectedTemporarySymbol = temporaryCsvSymbols.find(
+    (symbol) => symbol.path === selectedDataPath
+  );
+  const selectedSavedCsvSymbol = savedCsvSymbols.find(
     (symbol) => symbol.path === selectedDataPath
   );
   const [editingTemporarySymbolPath, setEditingTemporarySymbolPath] =
@@ -1841,7 +2009,9 @@ export default function App() {
   const [temporarySymbolForm, setTemporarySymbolForm] =
     useState<TemporaryCsvSymbolForm | null>(null);
   const selectedInstrument =
-    selectedTemporarySymbol ?? getInstrumentDefinition(selectedDataPath);
+    selectedTemporarySymbol ??
+    selectedSavedCsvSymbol ??
+    getInstrumentDefinition(selectedDataPath);
   const [currentDate, setCurrentDate] = useState("");
   const [currentOhlc, setCurrentOhlc] = useState<Candle | null>(null);
   const [dateInputValue, setDateInputValue] = useState("");
@@ -2088,6 +2258,7 @@ export default function App() {
         : viewSettings.fixedDisplayBars;
   const availableDataPaths = [
     ...temporaryCsvSymbols.map((symbol) => symbol.path),
+    ...savedCsvSymbols.map((symbol) => symbol.path),
     ...DATA_FILES,
   ];
   const getSymbolInfo = (path: string) => {
@@ -2096,6 +2267,11 @@ export default function App() {
     );
     if (temporarySymbol) {
       return { code: temporarySymbol.code, name: temporarySymbol.name };
+    }
+
+    const savedSymbol = savedCsvSymbols.find((symbol) => symbol.path === path);
+    if (savedSymbol) {
+      return { code: savedSymbol.code, name: savedSymbol.name };
     }
 
     return getStockInfoFromPath(path);
@@ -2214,6 +2390,10 @@ export default function App() {
       String(soundEnabled)
     );
   }, [soundEnabled]);
+
+  useEffect(() => {
+    saveSavedCsvSymbolsToStorage(savedCsvSymbols);
+  }, [savedCsvSymbols]);
 
   useEffect(() => {
     const syncViewportHeight = () => {
@@ -2550,8 +2730,20 @@ export default function App() {
     const loadDailyCandles = async () => {
       const cachedCandles = dailyCandlesCacheRef.current.get(selectedDataPath);
       if (cachedCandles) return cachedCandles;
-      if (selectedDataPath.startsWith("temp-csv:")) {
+      if (isTemporaryCsvPath(selectedDataPath)) {
         throw new Error("Temporary CSV data was not found");
+      }
+
+      if (isUserCsvPath(selectedDataPath)) {
+        const csvText = await loadUserCsvTextFromDatabase(selectedDataPath);
+        if (!csvText) {
+          throw new Error("Saved CSV data was not found");
+        }
+
+        csvTextCacheRef.current.set(selectedDataPath, csvText);
+        const candles = parseDailyCandles(csvText);
+        dailyCandlesCacheRef.current.set(selectedDataPath, candles);
+        return candles;
       }
 
       const response = await fetch(selectedDataPath);
@@ -3428,7 +3620,9 @@ export default function App() {
     nextDataPath: string,
     instrument = temporaryCsvSymbols.find(
       (symbol) => symbol.path === nextDataPath
-    ) ?? getInstrumentDefinition(nextDataPath)
+    ) ??
+      savedCsvSymbols.find((symbol) => symbol.path === nextDataPath) ??
+      getInstrumentDefinition(nextDataPath)
   ) => {
     anchorDailyDateRef.current = null;
     returnDailyDateRef.current = null;
@@ -3496,6 +3690,85 @@ export default function App() {
     closeTemporarySymbolEditor();
   };
 
+  const saveTemporarySymbolAsUserSymbol = async () => {
+    if (!editingTemporarySymbolPath || !temporarySymbolForm) return;
+
+    const currentSymbol = temporaryCsvSymbols.find(
+      (symbol) => symbol.path === editingTemporarySymbolPath
+    );
+    if (!currentSymbol) {
+      closeTemporarySymbolEditor();
+      return;
+    }
+
+    const updatedSymbol = normalizeTemporaryCsvSymbolForm(
+      currentSymbol.path,
+      currentSymbol.fileName,
+      temporarySymbolForm
+    );
+    const candles = dailyCandlesCacheRef.current.get(currentSymbol.path);
+    if (!candles) {
+      playEffect("error");
+      showOrderMessage(
+        isEnglish
+          ? "Temporary CSV data was not found"
+          : "一時CSVのデータが見つかりませんでした"
+      );
+      return;
+    }
+
+    const savedAt = new Date().toISOString();
+    const savedPath = createSavedCsvPath(currentSymbol.fileName);
+    const csvText =
+      csvTextCacheRef.current.get(currentSymbol.path) ??
+      candlesToCsvText(candles);
+    const savedSymbol: SavedCsvSymbol = {
+      ...updatedSymbol,
+      path: savedPath,
+      savedAt,
+    };
+
+    try {
+      await saveUserCsvToDatabase({ path: savedPath, csvText, savedAt });
+      dailyCandlesCacheRef.current.set(savedPath, candles);
+      dailyCandlesCacheRef.current.delete(currentSymbol.path);
+      csvTextCacheRef.current.set(savedPath, csvText);
+      csvTextCacheRef.current.delete(currentSymbol.path);
+      setSavedCsvSymbols((symbols) => [savedSymbol, ...symbols]);
+      setTemporaryCsvSymbols((symbols) =>
+        symbols.filter((symbol) => symbol.path !== currentSymbol.path)
+      );
+      setTradingBooks((books) => {
+        const currentBookForSymbol = books[currentSymbol.path];
+        if (!currentBookForSymbol) return books;
+        const rest = { ...books };
+        delete rest[currentSymbol.path];
+        return { ...rest, [savedPath]: currentBookForSymbol };
+      });
+      setPaintMarksByStock((marksByStock) => {
+        const currentMarks = marksByStock[currentSymbol.path];
+        if (!currentMarks) return marksByStock;
+        const rest = { ...marksByStock };
+        delete rest[currentSymbol.path];
+        return { ...rest, [savedPath]: currentMarks };
+      });
+      switchDataPath(savedPath, savedSymbol);
+      closeTemporarySymbolEditor();
+      playEffect("success");
+      showOrderMessage(
+        isEnglish
+          ? `${savedSymbol.code} ${savedSymbol.name} was saved`
+          : `${savedSymbol.code} ${savedSymbol.name}を銘柄一覧に保存しました`
+      );
+    } catch (error) {
+      console.error(error);
+      playEffect("error");
+      showOrderMessage(
+        isEnglish ? "Failed to save symbol" : "銘柄の保存に失敗しました"
+      );
+    }
+  };
+
   const importTemporaryCsv = async (file: File | null) => {
     if (!file) return;
 
@@ -3528,6 +3801,7 @@ export default function App() {
       };
 
       dailyCandlesCacheRef.current.set(path, candles);
+      csvTextCacheRef.current.set(path, csvText);
       setTemporaryCsvSymbols((symbols) => [temporarySymbol, ...symbols]);
       switchDataPath(path, temporarySymbol);
       openTemporarySymbolEditor(temporarySymbol);
@@ -6255,7 +6529,9 @@ export default function App() {
                 },
                 {
                   key: "unitLabel",
-                  label: isEnglish ? "Unit Label" : "単位",
+                  label: isEnglish
+                    ? "Unit Label (shares, USD, contracts)"
+                    : "単位名（株・USD・枚など）",
                   type: "text",
                 },
                 {
@@ -6340,8 +6616,8 @@ export default function App() {
                 }}
               >
                 {isEnglish
-                  ? "Examples: Japanese stocks JPY / stocks / 100 / 1, USDJPY JPY / USD / 1 / 1, futures USD / contracts / 1 / 1."
-                  : "例: 日本株は JPY / 株 / 100 / 1、ドル円は JPY / USD / 1 / 1、先物は USD / 枚 / 1 / 1。"}
+                  ? "Temporary Apply is lost on reload. Use Save Symbol to keep it. Examples: Japanese stocks JPY / shares / 100 / 1, USDJPY JPY / USD / 1 / 1, futures USD / contracts / 1 / 1."
+                  : "一時適用はリロードすると消えます。残す場合は銘柄一覧に保存してください。例: 日本株は JPY / 株 / 100 / 1、ドル円は JPY / USD / 1 / 1、先物は USD / 枚 / 1 / 1。"}
               </div>
             </div>
 
@@ -6370,6 +6646,22 @@ export default function App() {
                 {isEnglish ? "Cancel" : "キャンセル"}
               </button>
               <button
+                type="button"
+                onClick={() => void saveTemporarySymbolAsUserSymbol()}
+                style={{
+                  minWidth: "150px",
+                  border: "1px solid #16a34a",
+                  borderRadius: "6px",
+                  backgroundColor: "#15803d",
+                  color: "#fff",
+                  padding: "9px 14px",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                }}
+              >
+                {isEnglish ? "Save Symbol" : "保存して追加"}
+              </button>
+              <button
                 type="submit"
                 style={{
                   minWidth: "110px",
@@ -6382,7 +6674,7 @@ export default function App() {
                   fontWeight: 700,
                 }}
               >
-                {isEnglish ? "Apply" : "適用"}
+                {isEnglish ? "Apply Temporarily" : "一時適用"}
               </button>
             </div>
           </form>
