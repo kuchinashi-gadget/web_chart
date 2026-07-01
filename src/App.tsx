@@ -70,6 +70,12 @@ type PaintTextSettings = {
   size: PaintTextSizeOption;
   family: PaintFontFamilyOption;
 };
+type PaintTextDragState = {
+  objectId: string;
+  startPoint: PaintPoint;
+  originalObjects: PaintDrawingObject[];
+  moved: boolean;
+};
 
 type PaintPoint = {
   x: number;
@@ -745,15 +751,15 @@ function drawPaintObject(
     context.stroke();
   } else if (object.type === "text" && object.text) {
     const fontSize = getPaintTextFontSize(object.width, object.fontSize);
-    context.font = `700 ${fontSize}px ${getPaintTextFontFamily(
+    const textScaleX = 0.92;
+    context.font = `500 ${fontSize}px ${getPaintTextFontFamily(
       object.fontFamily
     )}`;
     context.textBaseline = "top";
     context.fillStyle = object.color;
-    context.strokeStyle = "rgba(0, 0, 0, 0.9)";
-    context.lineWidth = Math.max(2, fontSize * 0.08);
-    context.strokeText(object.text, start.x, start.y);
-    context.fillText(object.text, start.x, start.y);
+    context.translate(start.x, start.y);
+    context.scale(textScaleX, 1);
+    context.fillText(object.text, 0, 0);
   }
 
   context.restore();
@@ -765,7 +771,7 @@ function isPointNearPaintObject(point: PaintPoint, object: PaintDrawingObject) {
   const ys = object.points.map((item) => item.y);
   if (object.type === "text") {
     const fontSize = getPaintTextFontSize(object.width, object.fontSize);
-    const width = Math.max(60, (object.text?.length ?? 1) * fontSize);
+    const width = Math.max(60, (object.text?.length ?? 1) * fontSize * 0.92);
     const height = fontSize * 1.25;
     return (
       point.x >= xs[0] - padding &&
@@ -934,7 +940,7 @@ const paintFontFamilyOptions: Array<{
     value: "gothic",
     labelJa: "ゴシック",
     labelEn: "Gothic",
-    fontFamily: '"Yu Gothic UI", "Meiryo", sans-serif',
+    fontFamily: '"Meiryo", "Yu Gothic", sans-serif',
   },
   {
     value: "mincho",
@@ -1738,6 +1744,7 @@ export default function App() {
   const paintCanvasRef = useRef<HTMLCanvasElement>(null);
   const paintTextInputRef = useRef<HTMLInputElement | null>(null);
   const paintPointerActiveRef = useRef(false);
+  const paintTextDragRef = useRef<PaintTextDragState | null>(null);
   const customColorEditingIndexRef = useRef<number | null>(null);
   const lastChartWidthRef = useRef(0);
   const wheelNavigationAccumulatorRef = useRef(0);
@@ -3619,6 +3626,18 @@ export default function App() {
     );
   };
 
+  const findPaintObjectIndexAt = (
+    point: PaintPoint,
+    type?: PaintDrawingObject["type"]
+  ) => {
+    const reverseIndex = [...paintObjects].reverse().findIndex((object) => {
+      if (type && object.type !== type) return false;
+      return isPointNearPaintObject(point, object);
+    });
+
+    return reverseIndex < 0 ? -1 : paintObjects.length - 1 - reverseIndex;
+  };
+
   const commitPaintText = () => {
     if (!paintTextEditor) return;
     const text = paintTextEditor.value.trim();
@@ -3729,6 +3748,20 @@ export default function App() {
       if (existingText) {
         commitPaintText();
       }
+      const textObjectIndex = findPaintObjectIndexAt(point, "text");
+      if (textObjectIndex >= 0) {
+        const textObject = paintObjects[textObjectIndex];
+        event.currentTarget.setPointerCapture(event.pointerId);
+        paintPointerActiveRef.current = true;
+        paintTextDragRef.current = {
+          objectId: textObject.id,
+          startPoint: point,
+          originalObjects: paintObjects,
+          moved: false,
+        };
+        setPaintTextEditor(null);
+        return;
+      }
       const placeholderRectangle =
         event.currentTarget.parentElement?.getBoundingClientRect();
       if (!placeholderRectangle) return;
@@ -3766,6 +3799,29 @@ export default function App() {
   ) => {
     if (!paintPointerActiveRef.current) return;
     const point = getPaintCanvasPoint(event);
+    const textDrag = paintTextDragRef.current;
+
+    if (textDrag) {
+      const dx = point.x - textDrag.startPoint.x;
+      const dy = point.y - textDrag.startPoint.y;
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+        textDrag.moved = true;
+      }
+      setPaintObjects(
+        textDrag.originalObjects.map((object) =>
+          object.id === textDrag.objectId
+            ? {
+                ...object,
+                points: object.points.map((item) => ({
+                  x: item.x + dx,
+                  y: item.y + dy,
+                })),
+              }
+            : object
+        )
+      );
+      return;
+    }
 
     setPaintDraftObject((object) => {
       if (!object) return null;
@@ -3784,6 +3840,17 @@ export default function App() {
     paintPointerActiveRef.current = false;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    const textDrag = paintTextDragRef.current;
+    if (textDrag) {
+      paintTextDragRef.current = null;
+      if (textDrag.moved) {
+        setPaintUndoStack((stack) => [...stack, textDrag.originalObjects]);
+        setPaintRedoStack([]);
+      } else {
+        setPaintObjects(textDrag.originalObjects);
+      }
+      return;
     }
     const completedObject = paintDraftObject;
     setPaintDraftObject(null);
