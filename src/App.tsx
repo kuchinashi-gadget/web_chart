@@ -3753,8 +3753,42 @@ export default function App() {
       return;
     }
 
-    const savedAt = new Date().toISOString();
-    const savedPath = createSavedCsvPath(currentSymbol.fileName);
+    const duplicatedSymbol = savedCsvSymbols.find(
+      (symbol) =>
+        symbol.code.trim().toLowerCase() ===
+        updatedSymbol.code.trim().toLowerCase()
+    );
+    let saveMode: "new" | "overwrite" | "cancel" = "new";
+    if (duplicatedSymbol) {
+      const shouldOverwrite = window.confirm(
+        isEnglish
+          ? `${updatedSymbol.code} ${updatedSymbol.name} already exists. Overwrite the saved symbol?`
+          : `${updatedSymbol.code} ${updatedSymbol.name}はすでに保存済みです。上書きしますか？`
+      );
+      if (shouldOverwrite) {
+        saveMode = "overwrite";
+      } else {
+        saveMode = window.confirm(
+          isEnglish
+            ? "Save it as a separate symbol instead?"
+            : "別の銘柄として保存しますか？"
+        )
+          ? "new"
+          : "cancel";
+      }
+    }
+    if (saveMode === "cancel") {
+      return;
+    }
+
+    const savedAt =
+      duplicatedSymbol && saveMode === "overwrite"
+        ? duplicatedSymbol.savedAt
+        : new Date().toISOString();
+    const savedPath =
+      duplicatedSymbol && saveMode === "overwrite"
+        ? duplicatedSymbol.path
+        : createSavedCsvPath(currentSymbol.fileName);
     const csvText =
       csvTextCacheRef.current.get(currentSymbol.path) ??
       candlesToCsvText(candles);
@@ -3770,7 +3804,13 @@ export default function App() {
       dailyCandlesCacheRef.current.delete(currentSymbol.path);
       csvTextCacheRef.current.set(savedPath, csvText);
       csvTextCacheRef.current.delete(currentSymbol.path);
-      setSavedCsvSymbols((symbols) => [savedSymbol, ...symbols]);
+      setSavedCsvSymbols((symbols) =>
+        duplicatedSymbol && saveMode === "overwrite"
+          ? symbols.map((symbol) =>
+              symbol.path === duplicatedSymbol.path ? savedSymbol : symbol
+            )
+          : [savedSymbol, ...symbols]
+      );
       setTemporaryCsvSymbols((symbols) =>
         symbols.filter((symbol) => symbol.path !== currentSymbol.path)
       );
