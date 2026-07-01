@@ -31,6 +31,7 @@ const PAINT_MARKS_STORAGE_KEY = "stock-practice-paint-marks-v1";
 const PAINT_CUSTOM_COLORS_STORAGE_KEY = "stock-practice-paint-custom-colors-v1";
 const PAINT_PRACTICE_DB_NAME = "stock-practice-paint-db";
 const PAINT_PRACTICE_STORE_NAME = "paint-practices";
+const TRADE_DRAW_RATE_THRESHOLD = 0.005;
 
 
 type Timeframe = "daily" | "weekly" | "monthly";
@@ -39,6 +40,7 @@ type DisplayBarsOption = "auto" | "remember" | "50" | "75" | "100" | "150" | "20
 type DisplayBarsMode = "auto" | "remember" | "fixed";
 type InitialPositionMode = "latest" | "offset" | "remember" | "earliest";
 type SettingsTab = "ma" | "appearance" | "trading" | "view";
+type TradeOutcome = "win" | "loss" | "draw";
 type ExecutionTiming = "next-open" | "same-close";
 type AppLanguage = "ja" | "en";
 type ChartTheme = "dark" | "dark-blue" | "black" | "light" | "light-gray" | "ivory";
@@ -1798,6 +1800,11 @@ export default function App() {
     executedDate: isEnglish ? "Executed" : "約定日",
     executionPrice: isEnglish ? "Execution Price" : "約定価格",
     related: isEnglish ? "related" : "対応",
+    tradeScore: isEnglish ? "Results" : "勝敗",
+    win: isEnglish ? "Win" : "勝ち",
+    loss: isEnglish ? "Loss" : "負け",
+    draw: isEnglish ? "Draw" : "分け",
+    closedLots: isEnglish ? "Closed lots" : "返済した玉",
     paintPractice: isEnglish ? "Paint Practice" : "ペイント練習",
     paintCanvas: isEnglish ? "Paint Canvas" : "ペイントキャンバス",
     captureChart: isEnglish
@@ -2891,6 +2898,46 @@ export default function App() {
       : value < 0
         ? "profit-negative"
         : "profit-neutral";
+  const getTradeOutcome = (log: TradeLog): TradeOutcome | null => {
+    if (log.realizedProfit === null) return null;
+    if (log.realizedProfit === 0) return "draw";
+
+    const closedValue =
+      log.closedPositions?.reduce(
+        (total, position) =>
+          total +
+          Math.abs(
+            position.entryPrice *
+              position.sharesPerLot *
+              selectedInstrument.multiplier
+          ),
+        0
+      ) ?? 0;
+    const fallbackValue = Math.abs(
+      log.executionPrice * log.shares * selectedInstrument.multiplier
+    );
+    const baseValue = closedValue > 0 ? closedValue : fallbackValue;
+
+    if (baseValue > 0) {
+      const profitRate = Math.abs(log.realizedProfit) / baseValue;
+      if (profitRate < TRADE_DRAW_RATE_THRESHOLD) return "draw";
+    }
+
+    return log.realizedProfit > 0 ? "win" : "loss";
+  };
+  const tradeOutcomeLabel: Record<TradeOutcome, string> = {
+    win: ui.win,
+    loss: ui.loss,
+    draw: ui.draw,
+  };
+  const tradeOutcomeCounts = currentBook.logs.reduce(
+    (counts, log) => {
+      const outcome = getTradeOutcome(log);
+      if (outcome) counts[outcome] += 1;
+      return counts;
+    },
+    { win: 0, loss: 0, draw: 0 } as Record<TradeOutcome, number>
+  );
 
   const placeOrder = (action: OrderAction = orderAction) => {
     if (!dateInputValue) return;
@@ -3113,33 +3160,35 @@ export default function App() {
         (position) => !removePositionIds.has(position.id)
       );
 
-      if (!targetIsOpening && target.closedPositions?.length) {
-        const restoredIds = new Set(
-          target.closedPositions.map((position) => position.id)
-        );
-        if (target.action === "close-short") {
-          shortPositions = [
-            ...target.closedPositions.filter(
-              (position) =>
-                !book.shortPositions.some((item) => item.id === position.id)
-            ),
-            ...shortPositions.filter(
-              (position) => !restoredIds.has(position.id)
-            ),
-          ];
-        }
-        if (target.action === "close-long") {
-          longPositions = [
-            ...target.closedPositions.filter(
-              (position) =>
-                !book.longPositions.some((item) => item.id === position.id)
-            ),
-            ...longPositions.filter(
-              (position) => !restoredIds.has(position.id)
-            ),
-          ];
-        }
-      }
+      const targetPositionIds = new Set(target.positionIds ?? []);
+      const positionsToRestore = book.logs
+        .filter((log) => idsToRemove.has(log.id))
+        .flatMap((log) => log.closedPositions ?? [])
+        .filter((position) => !targetPositionIds.has(position.id));
+      const restoredIds = new Set(
+        positionsToRestore.map((position) => position.id)
+      );
+      const currentPositionIds = new Set([
+        ...book.shortPositions.map((position) => position.id),
+        ...book.longPositions.map((position) => position.id),
+      ]);
+      const restoredShortPositions = positionsToRestore.filter(
+        (position) =>
+          position.side === "short" && !currentPositionIds.has(position.id)
+      );
+      const restoredLongPositions = positionsToRestore.filter(
+        (position) =>
+          position.side === "long" && !currentPositionIds.has(position.id)
+      );
+
+      shortPositions = [
+        ...restoredShortPositions,
+        ...shortPositions.filter((position) => !restoredIds.has(position.id)),
+      ];
+      longPositions = [
+        ...restoredLongPositions,
+        ...longPositions.filter((position) => !restoredIds.has(position.id)),
+      ];
 
       return {
         ...books,
@@ -4936,6 +4985,18 @@ export default function App() {
               </dd>
             </div>
           </dl>
+          <div className="trade-score">
+            <span>{ui.tradeScore}</span>
+            <strong className="score-win">
+              {ui.win} {tradeOutcomeCounts.win}
+            </strong>
+            <strong className="score-loss">
+              {ui.loss} {tradeOutcomeCounts.loss}
+            </strong>
+            <strong className="score-draw">
+              {ui.draw} {tradeOutcomeCounts.draw}
+            </strong>
+          </div>
         </section>
 
         <section className="trade-section order-section">
@@ -6548,7 +6609,10 @@ export default function App() {
                 <h2>{ui.tradeLog}</h2>
                 <span>
                   {getStockInfoFromPath(selectedDataPath).code}{" "}
-                  {getStockInfoFromPath(selectedDataPath).name}
+                  {getStockInfoFromPath(selectedDataPath).name} / {ui.tradeScore}
+                  : {ui.win} {tradeOutcomeCounts.win} - {ui.loss}{" "}
+                  {tradeOutcomeCounts.loss} - {ui.draw}{" "}
+                  {tradeOutcomeCounts.draw}
                 </span>
               </div>
               <button
@@ -6568,6 +6632,7 @@ export default function App() {
               <div className="trade-log-list">
                 {currentBook.logs.map((log) => {
                   const relatedIds = getRelatedTradeLogIds(log);
+                  const outcome = getTradeOutcome(log);
                   const activeLog = currentBook.logs.find(
                     (item) => item.id === activeTradeLogId
                   );
@@ -6601,6 +6666,11 @@ export default function App() {
                               : ""}
                           </span>
                         </div>
+                        {outcome && (
+                          <span className={`trade-outcome-badge ${outcome}`}>
+                            {tradeOutcomeLabel[outcome]}
+                          </span>
+                        )}
                         <button
                           type="button"
                           onClick={(event) => {
@@ -6646,6 +6716,21 @@ export default function App() {
                               )}
                         </strong>
                       </div>
+                      {log.closedPositions && log.closedPositions.length > 0 && (
+                        <div className="trade-log-closed-list">
+                          <span>{ui.closedLots}</span>
+                          {log.closedPositions.map((position) => (
+                            <span key={position.id}>
+                              <strong>{position.entryDate}</strong>{" "}
+                              {formatCurrencyAmount(
+                                position.entryPrice,
+                                selectedInstrument.currency,
+                                false
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
