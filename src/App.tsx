@@ -4207,6 +4207,14 @@ export default function App() {
         return;
       }
 
+      if (key === "c") {
+        event.preventDefault();
+        barCountMeasurementRef.current = null;
+        setIsBarCountMode((enabled) => !enabled);
+        setBarCountMeasurement(null);
+        return;
+      }
+
       if (key === "f") {
         event.preventDefault();
         void toggleFullscreen();
@@ -4533,8 +4541,8 @@ export default function App() {
           }}
           title={
             isEnglish
-              ? "Click two candles to count bars"
-              : "ローソク足を2回クリックして本数を数えます"
+              ? "Click two candles to count bars. Shortcut: C"
+              : "ローソク足を2回クリックして本数を数えます。ショートカット: C"
           }
           style={{
             display: "inline-flex",
