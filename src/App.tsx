@@ -30,6 +30,7 @@ const SOUND_ENABLED_STORAGE_KEY = "stock-practice-sound-enabled-v1";
 const PAINT_MARKS_STORAGE_KEY = "stock-practice-paint-marks-v1";
 const PAINT_CUSTOM_COLORS_STORAGE_KEY = "stock-practice-paint-custom-colors-v1";
 const PAINT_TOOL_COLORS_STORAGE_KEY = "stock-practice-paint-tool-colors-v1";
+const PAINT_TEXT_SETTINGS_STORAGE_KEY = "stock-practice-paint-text-settings-v1";
 const PAINT_PRACTICE_DB_NAME = "stock-practice-paint-db";
 const PAINT_PRACTICE_STORE_NAME = "paint-practices";
 const DEFAULT_TRADE_DRAW_RATE_THRESHOLD = 0.005;
@@ -63,6 +64,12 @@ type PaintPracticeTool =
   | "text"
   | "eraser";
 type PaintToolColorMap = Partial<Record<PaintPracticeTool, string>>;
+type PaintTextSizeOption = "small" | "medium" | "large" | "xlarge";
+type PaintFontFamilyOption = "gothic" | "mincho" | "mono";
+type PaintTextSettings = {
+  size: PaintTextSizeOption;
+  family: PaintFontFamilyOption;
+};
 
 type PaintPoint = {
   x: number;
@@ -76,6 +83,8 @@ type PaintDrawingObject = {
   width: number;
   points: PaintPoint[];
   text?: string;
+  fontSize?: PaintTextSizeOption;
+  fontFamily?: PaintFontFamilyOption;
 };
 
 type PaintTextEditor = {
@@ -549,11 +558,26 @@ function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function getPaintTextFontSize(width: number) {
+function getPaintTextFontSize(
+  width: number,
+  sizeOption?: PaintTextSizeOption
+) {
+  const selectedSize = paintTextSizeOptions.find(
+    (option) => option.value === sizeOption
+  );
+  if (selectedSize) return selectedSize.fontSize;
+
   if (width <= 1) return 28;
   if (width <= 3) return 36;
   if (width <= 6) return 48;
   return 64;
+}
+
+function getPaintTextFontFamily(familyOption?: PaintFontFamilyOption) {
+  return (
+    paintFontFamilyOptions.find((option) => option.value === familyOption)
+      ?.fontFamily ?? paintFontFamilyOptions[0].fontFamily
+  );
 }
 
 function formatCurrencyAmount(value: number, currency: string, showSign = true) {
@@ -720,19 +744,11 @@ function drawPaintObject(
     );
     context.stroke();
   } else if (object.type === "text" && object.text) {
-    const fontSize = getPaintTextFontSize(object.width);
-    context.font = `700 ${fontSize}px "Yu Gothic UI", sans-serif`;
+    const fontSize = getPaintTextFontSize(object.width, object.fontSize);
+    context.font = `700 ${fontSize}px ${getPaintTextFontFamily(
+      object.fontFamily
+    )}`;
     context.textBaseline = "top";
-    const metrics = context.measureText(object.text);
-    const paddingX = Math.max(8, fontSize * 0.2);
-    const paddingY = Math.max(5, fontSize * 0.12);
-    context.fillStyle = "rgba(8, 15, 25, 0.72)";
-    context.fillRect(
-      start.x - paddingX,
-      start.y - paddingY,
-      metrics.width + paddingX * 2,
-      fontSize + paddingY * 2
-    );
     context.fillStyle = object.color;
     context.strokeStyle = "rgba(0, 0, 0, 0.9)";
     context.lineWidth = Math.max(2, fontSize * 0.08);
@@ -748,7 +764,7 @@ function isPointNearPaintObject(point: PaintPoint, object: PaintDrawingObject) {
   const xs = object.points.map((item) => item.x);
   const ys = object.points.map((item) => item.y);
   if (object.type === "text") {
-    const fontSize = getPaintTextFontSize(object.width);
+    const fontSize = getPaintTextFontSize(object.width, object.fontSize);
     const width = Math.max(60, (object.text?.length ?? 1) * fontSize);
     const height = fontSize * 1.25;
     return (
@@ -896,6 +912,44 @@ const paintPracticeColors = [
   "#111827",
 ];
 
+const paintTextSizeOptions: Array<{
+  value: PaintTextSizeOption;
+  labelJa: string;
+  labelEn: string;
+  fontSize: number;
+}> = [
+  { value: "small", labelJa: "小", labelEn: "Small", fontSize: 28 },
+  { value: "medium", labelJa: "標準", labelEn: "Normal", fontSize: 36 },
+  { value: "large", labelJa: "大", labelEn: "Large", fontSize: 48 },
+  { value: "xlarge", labelJa: "特大", labelEn: "XL", fontSize: 64 },
+];
+
+const paintFontFamilyOptions: Array<{
+  value: PaintFontFamilyOption;
+  labelJa: string;
+  labelEn: string;
+  fontFamily: string;
+}> = [
+  {
+    value: "gothic",
+    labelJa: "ゴシック",
+    labelEn: "Gothic",
+    fontFamily: '"Yu Gothic UI", "Meiryo", sans-serif',
+  },
+  {
+    value: "mincho",
+    labelJa: "明朝",
+    labelEn: "Mincho",
+    fontFamily: '"Yu Mincho", "MS Mincho", serif',
+  },
+  {
+    value: "mono",
+    labelJa: "等幅",
+    labelEn: "Mono",
+    fontFamily: '"Cascadia Mono", "Consolas", monospace',
+  },
+];
+
 function loadPaintCustomColors() {
   if (typeof window === "undefined") return [];
 
@@ -938,6 +992,35 @@ function loadPaintToolColors(): PaintToolColorMap {
     return colors;
   } catch {
     return {};
+  }
+}
+
+function loadPaintTextSettings(): PaintTextSettings {
+  const fallback: PaintTextSettings = { size: "medium", family: "gothic" };
+  if (typeof window === "undefined") return fallback;
+
+  try {
+    const stored = JSON.parse(
+      window.localStorage.getItem(PAINT_TEXT_SETTINGS_STORAGE_KEY) ?? "{}"
+    );
+    if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+      return fallback;
+    }
+
+    const size = paintTextSizeOptions.some(
+      (option) => option.value === stored.size
+    )
+      ? (stored.size as PaintTextSizeOption)
+      : fallback.size;
+    const family = paintFontFamilyOptions.some(
+      (option) => option.value === stored.family
+    )
+      ? (stored.family as PaintFontFamilyOption)
+      : fallback.family;
+
+    return { size, family };
+  } catch {
+    return fallback;
   }
 }
 
@@ -1734,6 +1817,9 @@ export default function App() {
     loadPaintCustomColors
   );
   const [paintPracticeWidth, setPaintPracticeWidth] = useState(3);
+  const [paintTextSettings, setPaintTextSettings] = useState<PaintTextSettings>(
+    loadPaintTextSettings
+  );
   const [paintPracticeNote, setPaintPracticeNote] = useState("");
   const [paintCanvasZoom, setPaintCanvasZoom] = useState(1);
   const [paintBackgroundDataUrl, setPaintBackgroundDataUrl] = useState("");
@@ -2091,6 +2177,13 @@ export default function App() {
       JSON.stringify(paintToolColors)
     );
   }, [paintToolColors]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      PAINT_TEXT_SETTINGS_STORAGE_KEY,
+      JSON.stringify(paintTextSettings)
+    );
+  }, [paintTextSettings]);
 
   useEffect(() => {
     if (!paintTextEditorPositionKey) return;
@@ -3541,6 +3634,8 @@ export default function App() {
           width: paintPracticeWidth,
           points: [paintTextEditor.point],
           text,
+          fontSize: paintTextSettings.size,
+          fontFamily: paintTextSettings.family,
         },
       ]);
     }
@@ -3637,7 +3732,7 @@ export default function App() {
       const placeholderRectangle =
         event.currentTarget.parentElement?.getBoundingClientRect();
       if (!placeholderRectangle) return;
-      const editorWidth = 310;
+      const editorWidth = 360;
       const left = Math.min(
         Math.max(event.clientX - placeholderRectangle.left, 8),
         Math.max(8, placeholderRectangle.width - editorWidth - 8)
@@ -4663,9 +4758,15 @@ export default function App() {
                     placeholder="文字を入力"
                     style={{
                       color: paintPracticeColor,
+                      fontFamily: getPaintTextFontFamily(
+                        paintTextSettings.family
+                      ),
                       fontSize: `${Math.max(
                         15,
-                        getPaintTextFontSize(paintPracticeWidth) * 0.5
+                        getPaintTextFontSize(
+                          paintPracticeWidth,
+                          paintTextSettings.size
+                        ) * 0.5
                       )}px`,
                     }}
                   />
@@ -4681,6 +4782,45 @@ export default function App() {
                   >
                     ×
                   </button>
+                  <div className="paint-inline-text-settings">
+                    <label>
+                      <span>{isEnglish ? "Size" : "サイズ"}</span>
+                      <select
+                        value={paintTextSettings.size}
+                        onChange={(event) =>
+                          setPaintTextSettings((settings) => ({
+                            ...settings,
+                            size: event.target.value as PaintTextSizeOption,
+                          }))
+                        }
+                      >
+                        {paintTextSizeOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {isEnglish ? option.labelEn : option.labelJa}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>{isEnglish ? "Font" : "フォント"}</span>
+                      <select
+                        value={paintTextSettings.family}
+                        onChange={(event) =>
+                          setPaintTextSettings((settings) => ({
+                            ...settings,
+                            family:
+                              event.target.value as PaintFontFamilyOption,
+                          }))
+                        }
+                      >
+                        {paintFontFamilyOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {isEnglish ? option.labelEn : option.labelJa}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
                 </form>
               )}
             </div>
