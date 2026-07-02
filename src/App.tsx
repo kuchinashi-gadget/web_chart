@@ -27,7 +27,17 @@ import {
   USER_SYMBOLS_STORE_NAME,
 } from "./constants/storageKeys";
 import { DATA_FILES, getInstrumentDefinition } from "./data/defaultSymbols";
-import type { Candle, DisplayCandle, InstrumentDefinition } from "./types";
+import type {
+  Candle,
+  DisplayCandle,
+  InstrumentDefinition,
+  OrderAction,
+  PendingOrder,
+  PositionLot,
+  PositionSide,
+  TradeLog,
+  TradingBook,
+} from "./types";
 import { parseDailyCandles } from "./utils/csv";
 
 declare global {
@@ -186,53 +196,9 @@ type TemporaryCsvSymbolForm = {
   multiplier: string;
   priceDecimals: string;
 };
-type OrderAction = "add-short" | "close-short" | "add-long" | "close-long";
-type PositionSide = "short" | "long";
-
 type MaPoint = {
   time: string;
   value: number;
-};
-
-type PositionLot = {
-  id: string;
-  side: PositionSide;
-  entryDate: string;
-  entryPrice: number;
-  sharesPerLot: number;
-};
-
-type PendingOrder = {
-  id: string;
-  action: OrderAction;
-  lots: number;
-  shares: number;
-  sharesPerLot: number;
-  orderedDate: string;
-  executeDate: string;
-  executionTiming: ExecutionTiming;
-};
-
-type TradeLog = {
-  id: string;
-  action: OrderAction;
-  lots: number;
-  shares: number;
-  orderedDate: string;
-  executionDate: string;
-  executionPrice: number;
-  realizedProfit: number | null;
-  positionIds?: string[];
-  closesPositionIds?: string[];
-  closedPositions?: PositionLot[];
-};
-
-type TradingBook = {
-  shortPositions: PositionLot[];
-  longPositions: PositionLot[];
-  pendingOrder: PendingOrder | null;
-  pendingOrders: PendingOrder[];
-  logs: TradeLog[];
 };
 
 function createEmptyTradingBook(): TradingBook {
