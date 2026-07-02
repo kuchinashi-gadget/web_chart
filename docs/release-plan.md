@@ -21,6 +21,33 @@ https://web-chart.stock-practice.workers.dev/
 
 これにより、Web アプリ本体は「過去チャートを読み込んで売買練習する」ための主要機能がかなり揃った状態になった。
 
+## 2026-07-02 追加決定
+
+- Webアプリ名とWebサイト名は `チャートプレイバック` に統一する。
+- 英語表記は `Chart Playback` とする。
+- 無料会員の保存済みCSV銘柄数は **10銘柄まで** とする。
+- 後から無料会員の上限を減らすと不満が出やすいため、基本的に減らさない。変更する場合は増やす方向を優先する。
+- ゲストはCSV銘柄追加不可とし、架空サンプル銘柄で主要機能を体験してもらう。
+- プロモーションビデオは、公式サイトのトップページ最小版を作った直後に作る。ログイン実装やPro機能より前に進めてよい。
+- `App.tsx` は 2026-07-02 時点で約8600行・約300KBあり、今後のCodex作業事故を避けるため、計画的なファイル分割を進める。
+
+## 直近の優先順位
+
+1. 現在のWebアプリを安定版として `git commit` / `git push` する。
+2. 最新docsを反映して `docs/` をcommitする。
+3. ゲスト・無料会員・Proの制限方針を確定する。
+4. ゲスト用の架空サンプルデータを5〜6銘柄作る。
+5. `D:\workspace\chart_playback_site` を作成し、公式サイト制作を始める。
+6. 公式サイトのトップページ・使い方・CSVガイド・免責事項を最小構成で作る。
+7. 30〜60秒のプロモーションビデオを作る。
+8. `chart-playback.com` / `app.chart-playback.com` の独自ドメイン構成を準備する。
+9. Cloudflare Pages / Workers で公式サイトとWebアプリを公開する。
+10. Google Analytics を公式サイトとWebアプリの両方に入れる。
+11. `Chart Playback 共通アカウント` の設計を固める。
+12. 無料会員ログインを実装し、CSV追加とデータ取得ツールDLを無料会員以上に制限する。
+13. ファイル分割は大規模に一括実行せず、計画を立てたうえで小さく進める。
+
+
 ## 現在できること
 
 - `public/data` に配置した CSV からチャート表示。
@@ -161,33 +188,125 @@ Web アプリ側は CSV を読み込む。
 
 ### App.tsx の分割
 
-現状 `App.tsx` が大きくなっている。
+現状 `App.tsx` は約8600行・約300KBまで大きくなっている。
 
-ただし、今すぐ全体を大規模に分割すると差分が大きくなり、Codex 作業のリスクも上がる。
-
-まずは、CSV 読み込み・銘柄管理に関係する部分だけを小さく分ける。
-
-優先して分ける候補:
+共通型、既定銘柄定義、CSVパース処理はすでに以下へ分割済み。
 
 - `src/types.ts`
 - `src/data/defaultSymbols.ts`
 - `src/utils/csv.ts`
-- `src/utils/storage.ts`
 
-現在までに、共通型、既定銘柄定義、CSV パース処理は分割済み。
+ただし、まだ `App.tsx` 内には以下が多く残っている。
 
-`src/utils/storage.ts` は、保存処理の依存が広いため次回以降に小さく進める。
+- storage key定数。
+- localStorage / IndexedDB の保存処理。
+- チャート設定の正規化・保存処理。
+- 売買練習データの正規化・保存処理。
+- ユーザーCSV銘柄の保存処理。
+- 日付処理。
+- 表示形式・CSV出力処理。
+- 足種集計、移動平均線、表示範囲処理。
+- ペイント練習処理。
+- 売買練習処理。
+- UI本体。
 
-その後、必要に応じて以下を分離する。
+ファイル分割は必要だが、UIコンポーネントまで一気に分ける大規模リファクタは避ける。
 
-- チャート描画
-- 売買練習
-- 売買ログ
-- チャートメモ
-- ペイント練習
-- 本数計測
-- 設定
-- 多言語文言
+#### 推奨する分割順
+
+1. `src/constants/storageKeys.ts`
+   - `TRADING_BOOKS_STORAGE_KEY`
+   - `CHART_SETTINGS_STORAGE_KEY`
+   - `CHART_VIEW_STATE_STORAGE_KEY`
+   - `SOUND_ENABLED_STORAGE_KEY`
+   - `PAINT_MARKS_STORAGE_KEY`
+   - `PAINT_CUSTOM_COLORS_STORAGE_KEY`
+   - `PAINT_TOOL_COLORS_STORAGE_KEY`
+   - `PAINT_TEXT_SETTINGS_STORAGE_KEY`
+   - `PAINT_PRACTICE_DB_NAME`
+   - `PAINT_PRACTICE_STORE_NAME`
+   - `USER_SYMBOLS_STORAGE_KEY`
+   - `USER_SYMBOLS_DB_NAME`
+   - `USER_SYMBOLS_STORE_NAME`
+
+2. `src/utils/date.ts`
+   - `toLocalDate`
+   - `formatDate`
+   - `formatDateWithWeekday`
+   - `chartTimeToDateText`
+   - `getCalendarCells`
+   - `shiftCalendarMonth`
+
+3. `src/utils/format.ts`
+   - `formatCurrencyAmount`
+   - `formatQuantity`
+   - `formatPrice`
+   - `escapeCsvValue`
+   - `downloadTextFile`
+
+4. `src/utils/timeframe.ts`
+   - `calculateMA`
+   - `getWeekEndKey`
+   - `getMonthEndKey`
+   - `aggregateCandles`
+   - `findEndIndexByAnchor`
+   - `findDailyDateOnOrBefore`
+
+5. `src/utils/storage/chartSettingsStorage.ts`
+   - チャート設定の正規化。
+   - `loadChartSettingsFromStorage`
+   - `saveChartSettingsToStorage`
+   - `loadChartViewStateFromStorage`
+   - `saveChartViewStateToStorage`
+
+6. `src/utils/storage/tradingBookStorage.ts`
+   - 売買ログ、建玉、未約定注文の正規化。
+   - `loadTradingBooksFromStorage`
+   - `saveTradingBooksToStorage`
+
+7. `src/utils/storage/userSymbolsStorage.ts`
+   - `openUserSymbolsDatabase`
+   - `saveUserCsvToDatabase`
+   - `loadUserCsvTextFromDatabase`
+   - `deleteUserCsvFromDatabase`
+   - `loadSavedCsvSymbolsFromStorage`
+   - `saveSavedCsvSymbolsToStorage`
+
+8. `src/utils/storage/paintPracticeStorage.ts`
+   - ペイント練習のIndexedDB保存。
+   - `openPaintPracticeDatabase`
+   - `savePaintPracticeToDatabase`
+   - `loadPaintPracticesFromDatabase`
+   - `deletePaintPracticeFromDatabase`
+   - チャートメモ保存処理。
+
+#### 後回しにする分割
+
+以下はpropsが増えやすく差分が大きくなるため、今は後回しにする。
+
+- `TradePanel.tsx`
+- `PaintPanel.tsx`
+- `SettingsDialog.tsx`
+- `ChartArea.tsx`
+- App全体の大規模リファクタ
+
+#### Codex推論モデルの使い分け
+
+- 分割計画だけ作る: `非常に高い`
+- storage / timeframe / trade など壊れやすい処理の分離: `高`
+- 型・定数・文言・CSSなどの小さい分離: `中`
+
+最初は、`非常に高い` で実装せずに分割計画だけ作らせる。
+その後、`中〜高` で1ステップずつ実装する。
+
+#### 作業ルール
+
+- 分割前に必ず `npm run build` / `npm run lint` を通す。
+- 作業前に必ずcommitする。
+- 1回のCodex依頼では1ファイルまたは1種類の処理だけを移す。
+- UI変更・新機能追加・リファクタを混ぜない。
+- build / lint が通ったらすぐcommitする。
+- 差分が大きくなりそうなら、Codexに実装前に止めて報告させる。
 
 ### ユーザー CSV 読み込み
 
@@ -240,7 +359,7 @@ Web アプリ側は CSV を読み込む。
 
 ## 公式サイト・URL構成
 
-サービス名は `Chart Playback` で進める。
+サービス名は `チャートプレイバック / Chart Playback` で進める。Webアプリ名も公式サイト名も `チャートプレイバック` に統一する。
 
 現在の `https://web-chart.stock-practice.workers.dev/` は仮公開URLとして扱う。正式公開前にURLを整理するため、今後変更になってよい。
 
@@ -302,6 +421,38 @@ URL例:
 
 `/app` はWebアプリ本体を埋め込むのではなく、当面は `https://app.chart-playback.com/` へ案内するページまたはボタンでよい。
 
+## プロモーションビデオ方針
+
+プロモーションビデオは、公式サイトのトップページ最小版を作った直後に作る。
+ログイン実装、Pro機能、クラウド保存より前に進めてよい。
+
+最初に作る動画は30〜60秒の紹介動画にする。
+内容は以下を中心にする。
+
+- 過去チャートを1本ずつ進める。
+- 売買練習をする。
+- 建玉、損益、勝敗を見る。
+- チャートメモを残す。
+- ペイントで振り返る。
+- CSV読み込み・銘柄管理ができることを短く見せる。
+
+動画内では、投資助言に見える表現を避ける。
+
+避ける表現:
+
+- 勝てる。
+- 儲かる。
+- 買い時が分かる。
+- 必勝。
+
+使う表現:
+
+- 売買判断の練習。
+- チャート読解の練習。
+- 過去チャートで振り返る。
+- 投資助言ではありません。
+
+
 ## ゲスト向けサンプルデータ
 
 ゲストは自分のCSV銘柄追加をできない方向で検討する。その代わり、サンプル銘柄で主要機能を体験できるようにする。
@@ -349,7 +500,7 @@ DEMO-FX     架空ドル円風: 小数価格・為替風
 - CSV銘柄追加。
 - 銘柄管理。
 - ブラウザ内保存。
-- 保存銘柄数は5〜10件程度に制限する想定。正確な上限は後で決める。
+- 保存銘柄数は10件までにする。
 - Windows向けデータ取得ツールのダウンロード。
 - お知らせ・更新情報の受け取り候補。
 
