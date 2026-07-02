@@ -11,6 +11,21 @@ import {
   type SeriesMarker,
   type Time,
 } from "lightweight-charts";
+import {
+  CHART_SETTINGS_STORAGE_KEY,
+  CHART_VIEW_STATE_STORAGE_KEY,
+  PAINT_CUSTOM_COLORS_STORAGE_KEY,
+  PAINT_MARKS_STORAGE_KEY,
+  PAINT_PRACTICE_DB_NAME,
+  PAINT_PRACTICE_STORE_NAME,
+  PAINT_TEXT_SETTINGS_STORAGE_KEY,
+  PAINT_TOOL_COLORS_STORAGE_KEY,
+  SOUND_ENABLED_STORAGE_KEY,
+  TRADING_BOOKS_STORAGE_KEY,
+  USER_SYMBOLS_DB_NAME,
+  USER_SYMBOLS_STORAGE_KEY,
+  USER_SYMBOLS_STORE_NAME,
+} from "./constants/storageKeys";
 import { DATA_FILES, getInstrumentDefinition } from "./data/defaultSymbols";
 import type { Candle, DisplayCandle, InstrumentDefinition } from "./types";
 import { parseDailyCandles } from "./utils/csv";
@@ -25,19 +40,6 @@ const BAR_SPACING = 8;
 const MIN_AUTO_DISPLAY_BARS = 30;
 const MAX_AUTO_DISPLAY_BARS = 320;
 const WHEEL_NAVIGATION_THRESHOLD = 40;
-const TRADING_BOOKS_STORAGE_KEY = "stock-practice-trading-books-v1";
-const CHART_SETTINGS_STORAGE_KEY = "stock-practice-chart-settings-v1";
-const CHART_VIEW_STATE_STORAGE_KEY = "stock-practice-chart-view-state-v1";
-const SOUND_ENABLED_STORAGE_KEY = "stock-practice-sound-enabled-v1";
-const PAINT_MARKS_STORAGE_KEY = "stock-practice-paint-marks-v1";
-const PAINT_CUSTOM_COLORS_STORAGE_KEY = "stock-practice-paint-custom-colors-v1";
-const PAINT_TOOL_COLORS_STORAGE_KEY = "stock-practice-paint-tool-colors-v1";
-const PAINT_TEXT_SETTINGS_STORAGE_KEY = "stock-practice-paint-text-settings-v1";
-const PAINT_PRACTICE_DB_NAME = "stock-practice-paint-db";
-const PAINT_PRACTICE_STORE_NAME = "paint-practices";
-const USER_SYMBOLS_STORAGE_KEY = "stock-practice-user-symbols-v1";
-const USER_SYMBOLS_DB_NAME = "stock-practice-user-symbols-db";
-const USER_SYMBOLS_STORE_NAME = "csv-files";
 const DEFAULT_TRADE_DRAW_RATE_THRESHOLD = 0.005;
 
 
